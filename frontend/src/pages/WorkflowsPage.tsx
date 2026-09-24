@@ -3,14 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ChevronRight, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
-import { createPipeline, listPipelines, patchPipelineActive } from "@/api/pipelines";
-import type { PipelineListItem } from "@/api/types";
+import { createPipeline, listPipelines } from "@/api/pipelines";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { StatusPill } from "@/components/StatusPill";
 import { RelativeTime } from "@/components/RelativeTime";
 import { useRunEvents } from "@/hooks/useRunEvents";
+import { useSetPipelineActive } from "@/hooks/useSetPipelineActive";
 import { cn } from "@/lib/utils";
 
 type FilterTab = "all" | "active" | "inactive";
@@ -32,27 +32,7 @@ export function WorkflowsPage() {
     }
   });
 
-  const toggleActive = useMutation({
-    mutationFn: ({ id, is_active }: { id: string; is_active: boolean }) =>
-      patchPipelineActive(id, is_active),
-    onMutate: async ({ id, is_active }) => {
-      await queryClient.cancelQueries({ queryKey: ["pipelines"] });
-      const previous = queryClient.getQueryData<PipelineListItem[]>(["pipelines"]);
-      queryClient.setQueryData<PipelineListItem[]>(["pipelines"], (old) =>
-        old?.map((p) => (p.id === id ? { ...p, is_active } : p))
-      );
-      return { previous };
-    },
-    onError: (err, _vars, context) => {
-      queryClient.setQueryData(["pipelines"], context?.previous);
-      toast.error(err instanceof ApiError ? err.message : "Couldn't update this workflow");
-    },
-    onSuccess: (_data, { id, is_active }) => {
-      const name = queryClient.getQueryData<PipelineListItem[]>(["pipelines"])?.find((p) => p.id === id)?.name;
-      toast.success(`${name ?? "Workflow"} is now ${is_active ? "active" : "inactive"}`);
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
-  });
+  const toggleActive = useSetPipelineActive();
 
   const createWorkflow = useMutation({
     mutationFn: async () => {

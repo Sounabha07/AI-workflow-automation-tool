@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { ReactFlowProvider } from "@xyflow/react";
 import { toast } from "sonner";
-import { getLatestOutputs, getPipeline, patchPipelineActive, updatePipeline } from "@/api/pipelines";
+import { getLatestOutputs, getPipeline, updatePipeline } from "@/api/pipelines";
 import { getRun, getRunBlock, getRunBlocks, testStep, triggerRun } from "@/api/runs";
 import { ApiError } from "@/api/client";
 import type { RunEvent, WorkflowDefinition } from "@/api/types";
@@ -12,6 +12,7 @@ import { useEditorStore, type BlockRuntimeState } from "@/store/editor";
 import { applyPipelineActive } from "@/lib/pipelineCache";
 import { useRunEvents } from "@/hooks/useRunEvents";
 import { useBlockSchemas, schemaFor } from "@/hooks/useBlockSchemas";
+import { useSetPipelineActive } from "@/hooks/useSetPipelineActive";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { BlockPicker } from "@/components/editor/BlockPicker";
@@ -213,11 +214,7 @@ function EditorPageInner() {
     }
   }
 
-  const activeMutation = useMutation({
-    mutationFn: (is_active: boolean) => patchPipelineActive(pipelineId!, is_active),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : "Couldn't update this workflow"),
-  });
+  const activeMutation = useSetPipelineActive();
 
   const isActive = mode === "edit" ? pipelineQuery.data?.is_active ?? false : false;
 
@@ -385,7 +382,7 @@ function EditorPageInner() {
         {mode === "edit" && (
           <span className="flex items-center gap-2 text-xs text-ink-2">
             {isActive ? "Active" : "Inactive"}
-            <Switch checked={isActive} onCheckedChange={(v) => activeMutation.mutate(v)} aria-label="Active" />
+            <Switch checked={isActive} onCheckedChange={(v) => activeMutation.mutate({ id: pipelineId!, is_active: v })} aria-label="Active" />
           </span>
         )}
         <Button variant="primary" onClick={handleSaveClick} disabled={saveMutation.isPending}>
