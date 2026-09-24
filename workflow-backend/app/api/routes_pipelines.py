@@ -165,6 +165,8 @@ async def update_pipeline(
 ) -> PipelineResponse:
     if body.name is None and body.definition is None:
         raise ValueError("At least one of 'name' or 'definition' must be provided")
+    if body.name is not None and not body.name.strip():
+        raise ValueError("Workflow name can't be empty")
     if body.definition is not None:
         ensure_valid(body.definition)
 

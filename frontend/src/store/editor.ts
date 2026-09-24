@@ -50,6 +50,9 @@ interface EditorStore {
   applyBlockStatusEvent: (event: BlockStatusEvent) => void;
   applyRunStatusEvent: (event: RunStatusEvent) => void;
   setOpenBlockId: (id: string | null) => void;
+  /** EditorPage's "Run workflow" flow, registered so a trigger node can start it too. */
+  runWorkflow: (() => void) | null;
+  setRunWorkflow: (fn: (() => void) | null) => void;
   reset: () => void;
 }
 
@@ -65,6 +68,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   activeRunStatus: null,
   blockStates: {},
   openBlockId: null,
+  runWorkflow: null,
 
   setPipelineMeta: (id, name) => set({ pipelineId: id, pipelineName: name }),
 
@@ -160,6 +164,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   },
 
   setOpenBlockId: (id) => set({ openBlockId: id }),
+  setRunWorkflow: (fn) => set({ runWorkflow: fn }),
 
   reset: () =>
     set({

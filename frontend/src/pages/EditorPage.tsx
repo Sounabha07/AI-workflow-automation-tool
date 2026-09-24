@@ -3,20 +3,23 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { ReactFlowProvider } from "@xyflow/react";
 import { toast } from "sonner";
-import { getLatestOutputs, getPipeline, patchPipelineActive, updatePipeline } from "@/api/pipelines";
+import { getLatestOutputs, getPipeline, updatePipeline } from "@/api/pipelines";
 import { getRun, getRunBlock, getRunBlocks, testStep, triggerRun } from "@/api/runs";
 import { ApiError } from "@/api/client";
 import type { RunEvent, WorkflowDefinition } from "@/api/types";
 import { definitionToFlow, flowToDefinition } from "@/lib/definition";
 import { useEditorStore, type BlockRuntimeState } from "@/store/editor";
+import { applyPipelineActive } from "@/lib/pipelineCache";
 import { useRunEvents } from "@/hooks/useRunEvents";
 import { useBlockSchemas, schemaFor } from "@/hooks/useBlockSchemas";
+import { useSetPipelineActive } from "@/hooks/useSetPipelineActive";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { BlockPicker } from "@/components/editor/BlockPicker";
 import { Canvas } from "@/components/editor/Canvas";
 import { BlockEditor } from "@/components/ndv/BlockEditor";
 import { SaveDialog } from "@/components/editor/SaveDialog";
+import { WorkflowNameInput } from "@/components/editor/WorkflowNameInput";
 import { RunInputDialog, type InputFieldDef } from "@/components/editor/RunInputDialog";
 
 function EditorPageInner() {
@@ -165,6 +168,17 @@ function EditorPageInner() {
 
   useRunEvents(activeRunId, onRunEvent);
 
+  // Let a trigger node start the same flow as the "Run workflow" button. The
+  // ref keeps the registered function stable while always calling the latest
+  // handleRunWorkflow (which closes over the current nodes, edges and dirty).
+  const runWorkflowRef = useRef<() => void>(() => {});
+  runWorkflowRef.current = () => handleRunWorkflow();
+  const setRunWorkflow = useEditorStore((s) => s.setRunWorkflow);
+  useEffect(() => {
+    setRunWorkflow(() => runWorkflowRef.current());
+    return () => setRunWorkflow(null);
+  }, [setRunWorkflow]);
+
   // Warn on navigation away with unsaved changes (B6).
   useEffect(() => {
     if (!dirty) return;
@@ -201,11 +215,7 @@ function EditorPageInner() {
     }
   }
 
-  const activeMutation = useMutation({
-    mutationFn: (is_active: boolean) => patchPipelineActive(pipelineId!, is_active),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
-    onError: (err) => toast.error(err instanceof ApiError ? err.message : "Couldn't update this workflow"),
-  });
+  const activeMutation = useSetPipelineActive();
 
   const isActive = mode === "edit" ? pipelineQuery.data?.is_active ?? false : false;
 
@@ -226,7 +236,9 @@ function EditorPageInner() {
   async function startRun(targetPipelineId: string, definition: WorkflowDefinition, inputData: Record<string, unknown> = {}) {
     setRunning(true);
     try {
-      const { run_id } = await triggerRun(targetPipelineId, inputData);
+      const { run_id, pipeline_is_active } = await triggerRun(targetPipelineId, inputData);
+      // POST /runs switches the workflow on; show it without waiting for a refetch.
+      applyPipelineActive(queryClient, targetPipelineId, pipeline_is_active);
       setActiveRun(run_id);
       resetBlockStates(
         Object.fromEntries(
@@ -247,6 +259,7 @@ function EditorPageInner() {
   }
 
   function handleRunWorkflow() {
+    if (running) return;
     const definition = flowToDefinition(nodes, edges);
 
     if (mode === "run") {
@@ -359,7 +372,11 @@ function EditorPageInner() {
           {breadcrumb}
         </button>
         <span className="text-ink-3">/</span>
-        <span className="font-semibold">{pipelineName}</span>
+        {mode === "edit" && pipelineId ? (
+          <WorkflowNameInput pipelineId={pipelineId} name={pipelineName} />
+        ) : (
+          <span className="font-semibold">{pipelineName}</span>
+        )}
         {dirty && (
           <span className="flex items-center gap-1 text-xs text-[#8C6108]">
             <span className="h-1.5 w-1.5 rounded-full bg-current" />
@@ -370,7 +387,7 @@ function EditorPageInner() {
         {mode === "edit" && (
           <span className="flex items-center gap-2 text-xs text-ink-2">
             {isActive ? "Active" : "Inactive"}
-            <Switch checked={isActive} onCheckedChange={(v) => activeMutation.mutate(v)} aria-label="Active" />
+            <Switch checked={isActive} onCheckedChange={(v) => activeMutation.mutate({ id: pipelineId!, is_active: v })} aria-label="Active" />
           </span>
         )}
         <Button variant="primary" onClick={handleSaveClick} disabled={saveMutation.isPending}>
