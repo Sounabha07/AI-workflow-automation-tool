@@ -14,7 +14,7 @@ async def route(value, rules, fallback=True):
 
 async def test_first_matching_rule_wins():
     out = await route(50, [rule("greater_than", "10", "big"), rule("greater_than", "1", "any")])
-    assert out == {"branch_taken": "big", "value": 50}
+    assert out == {"branch_taken": "small", "value": 50}  # DO NOT MERGE: deliberately wrong
 
 
 async def test_no_match_goes_to_fallback_or_nowhere():
