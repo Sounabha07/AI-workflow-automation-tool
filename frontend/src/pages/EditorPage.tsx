@@ -19,6 +19,7 @@ import { BlockPicker } from "@/components/editor/BlockPicker";
 import { Canvas } from "@/components/editor/Canvas";
 import { BlockEditor } from "@/components/ndv/BlockEditor";
 import { SaveDialog } from "@/components/editor/SaveDialog";
+import { WorkflowNameInput } from "@/components/editor/WorkflowNameInput";
 import { RunInputDialog, type InputFieldDef } from "@/components/editor/RunInputDialog";
 
 function EditorPageInner() {
@@ -371,7 +372,11 @@ function EditorPageInner() {
           {breadcrumb}
         </button>
         <span className="text-ink-3">/</span>
-        <span className="font-semibold">{pipelineName}</span>
+        {mode === "edit" && pipelineId ? (
+          <WorkflowNameInput pipelineId={pipelineId} name={pipelineName} />
+        ) : (
+          <span className="font-semibold">{pipelineName}</span>
+        )}
         {dirty && (
           <span className="flex items-center gap-1 text-xs text-[#8C6108]">
             <span className="h-1.5 w-1.5 rounded-full bg-current" />

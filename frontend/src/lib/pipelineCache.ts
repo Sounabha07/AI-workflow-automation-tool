@@ -11,3 +11,17 @@ export function applyPipelineActive(queryClient: QueryClient, pipelineId: string
     old ? { ...old, is_active: isActive } : old
   );
 }
+
+/** After a successful rename (PUT), update the detail and list entries. */
+export function applyPipelineUpdate(queryClient: QueryClient, pipeline: PipelineResponse) {
+  queryClient.setQueryData<PipelineResponse>(["pipeline", pipeline.id], pipeline);
+  queryClient.setQueryData<PipelineListItem[]>(["pipelines"], (old) =>
+    old?.map((p) => (p.id === pipeline.id ? { ...p, name: pipeline.name, updated_at: pipeline.updated_at } : p))
+  );
+}
+
+/** After a successful DELETE, drop the pipeline from every cache entry. */
+export function removePipelineFromCache(queryClient: QueryClient, pipelineId: string) {
+  queryClient.setQueryData<PipelineListItem[]>(["pipelines"], (old) => old?.filter((p) => p.id !== pipelineId));
+  queryClient.removeQueries({ queryKey: ["pipeline", pipelineId] });
+}

@@ -40,3 +40,7 @@ export function getLatestOutputs(id: string): Promise<LatestOutputs> {
 export function getPipelineRuns(id: string): Promise<RunResponse[]> {
   return apiFetch(`/pipelines/${id}/runs`);
 }
+
+export function deletePipeline(id: string): Promise<void> {
+  return apiFetch(`/pipelines/${id}`, { method: "DELETE" });
+}
