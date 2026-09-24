@@ -1,0 +1,45 @@
+# Secrets — must never end up inside the image
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Git
+.git
+.gitignore
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reference folder — not part of the backend
+dag-engine/
+
+# Docker files themselves
+Dockerfile
+docker-compose.yml
+
+# Docs
+*.md

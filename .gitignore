@@ -1,0 +1,119 @@
+# =====================================================
+# Secrets and credentials (most important section)
+# =====================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Firebase Admin SDK service account keys
+*firebase-adminsdk*.json
+serviceAccountKey.json
+service-account*.json
+
+# Google OAuth client secrets / cached tokens (Gmail, Drive, Sheets, etc.)
+credentials.json
+client_secret*.json
+token.json
+token.pickle
+
+# Firebase CLI local state
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+.runtimeconfig.json
+
+# =====================================================
+# Python backend (FastAPI / Celery / engine)
+# =====================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging / build
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.hypothesis/
+.tox/
+.nox/
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Celery
+celerybeat-schedule
+celerybeat-schedule.*
+celerybeat.pid
+
+# Jupyter (API exploration notebooks)
+.ipynb_checkpoints/
+
+# =====================================================
+# Frontend (React / Vite / TypeScript)
+# =====================================================
+node_modules/
+.vite/
+*.tsbuildinfo
+.eslintcache
+coverage/
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =====================================================
+# Local data and databases
+# =====================================================
+*.sqlite
+*.sqlite3
+*.db
+dump.rdb
+pgdata/
+redis-data/
+docker-data/
+
+# Uploaded files during local testing (object storage stand-in)
+uploads/
+tmp/
+
+# =====================================================
+# Logs
+# =====================================================
+logs/
+*.log
+
+# =====================================================
+# Editors and OS
+# =====================================================
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
