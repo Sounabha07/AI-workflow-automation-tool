@@ -1,7 +1,6 @@
 import json
 from uuid import UUID
 
-import asyncpg
 from fastapi import APIRouter
 from fastapi.responses import Response
 
@@ -220,18 +219,13 @@ async def patch_pipeline(pipeline_id: UUID, body: PatchPipelineRequest) -> Pipel
 
 @router.delete("/{pipeline_id}", status_code=204)
 async def delete_pipeline(pipeline_id: UUID) -> Response:
+    """Hard delete. runs -> pipelines and block_executions -> runs are both
+    ON DELETE CASCADE, so the pipeline's whole run history goes with it."""
     conn = await get_connection()
     try:
-        try:
-            async with conn.transaction():
-                result = await conn.execute(
-                    "DELETE FROM pipelines WHERE id = $1", pipeline_id
-                )
-        except asyncpg.ForeignKeyViolationError:
-            from fastapi.responses import JSONResponse
-            return JSONResponse(
-                status_code=409,
-                content={"detail": "Cannot delete a pipeline that has existing runs"},
+        async with conn.transaction():
+            result = await conn.execute(
+                "DELETE FROM pipelines WHERE id = $1", pipeline_id
             )
 
         # asyncpg returns "DELETE N" where N is the row count

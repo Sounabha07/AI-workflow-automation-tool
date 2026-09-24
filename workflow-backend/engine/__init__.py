@@ -148,11 +148,12 @@ async def start_run(
 
 async def is_run_failed(run_id: str) -> bool:
     """Checked before every dispatch — the enforcement mechanism for
-    'no new work starts after a failure'."""
+    'no new work starts after a failure'. A run that no longer exists (its
+    pipeline was deleted mid-run, cascading to the run) also stops here."""
     conn = await get_connection()
     try:
         status = await conn.fetchval("SELECT status FROM runs WHERE id = $1", run_id)
-        return status == "failed"
+        return status is None or status == "failed"
     finally:
         await conn.close()
 
