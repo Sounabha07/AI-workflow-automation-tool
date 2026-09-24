@@ -1,0 +1,66 @@
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #18202c;
+  --ink-2: #4a5566;
+  --ink-3: #8a94a3;
+  --line: #dce1e8;
+  --line-2: #c5ccd6;
+  --canvas: #eef1f5;
+  --surface: #ffffff;
+  --panel: #f7f9fb;
+  --accent: #2f5bea;
+  --accent-bg: #eaf0fe;
+  --ok: #1e9e5a;
+  --ok-bg: #e6f5ec;
+  --err: #d8453b;
+  --err-bg: #fbeae8;
+  --run: #d99a0e;
+  --run-bg: #fbf3de;
+  --t-trigger: #7b61ff;
+  --t-flow: #c8457f;
+  --t-data: #13a38a;
+  --t-action: #d9731a;
+
+  /* shadcn/ui theme variables, pointed at the tokens above */
+  --background: var(--canvas);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: #ffffff;
+  --secondary: var(--panel);
+  --secondary-foreground: var(--ink);
+  --muted: var(--panel);
+  --muted-foreground: var(--ink-3);
+  --destructive: var(--err);
+  --destructive-foreground: #ffffff;
+  --border: var(--line);
+  --input: var(--line-2);
+  --ring: var(--accent);
+  --radius: 0.5rem;
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+}
+
+.status-pulse {
+  animation: pulse-run 1.2s ease-in-out infinite;
+}

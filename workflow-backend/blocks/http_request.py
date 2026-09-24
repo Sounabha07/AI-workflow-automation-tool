@@ -34,6 +34,7 @@ from blocks.registry import register_block
 
 HTTP_BLOCK_SCHEMA = {
     "name": "HTTP Request",
+    "category": "Actions",
     "description": "Make HTTP requests to any API or URL",
     "icon": "http",
     "fields": [
@@ -221,6 +222,10 @@ HTTP_BLOCK_SCHEMA = {
 # Block implementation                                                 #
 # ------------------------------------------------------------------ #
 
+# Response body kept in error messages; longer bodies are cut with a marker.
+MAX_ERROR_BODY_CHARS = 2000
+
+
 @register_block("http_request")
 class HttpRequestBlock(BaseBlock):
     """
@@ -317,6 +322,15 @@ class HttpRequestBlock(BaseBlock):
 
             if content_type == "json":
                 body_data = config.get("body_json", {})
+                if isinstance(body_data, str):
+                    # Already JSON text (e.g. one expression that resolved to a
+                    # JSON string): decode it so it is encoded only once below.
+                    try:
+                        body_data = json.loads(body_data)
+                    except json.JSONDecodeError as e:
+                        raise FatalError(
+                            f"HTTP Request block: Body (JSON) is not valid JSON: {e}"
+                        )
                 body_bytes = json.dumps(body_data).encode("utf-8")
                 headers.setdefault("Content-Type", "application/json")
 
@@ -390,7 +404,9 @@ class HttpRequestBlock(BaseBlock):
 
     @staticmethod
     def _raise_for_status(status: int, body: bytes) -> None:
-        body_text = body.decode("utf-8", errors="replace")[:200]
+        body_text = body.decode("utf-8", errors="replace")
+        if len(body_text) > MAX_ERROR_BODY_CHARS:
+            body_text = body_text[:MAX_ERROR_BODY_CHARS] + "… (truncated)"
 
         if status == 429:
             raise RetryableError(

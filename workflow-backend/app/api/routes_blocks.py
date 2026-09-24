@@ -1,6 +1,7 @@
 import blocks.manual_trigger    # noqa: F401
 import blocks.input_block       # noqa: F401
 import blocks.http_request      # noqa: F401
+import blocks.switch            # noqa: F401
 
 from fastapi import APIRouter
 from blocks.registry import list_registered_types, get_block_class
