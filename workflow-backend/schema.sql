@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS pipelines (
 
 CREATE TABLE IF NOT EXISTS runs (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    pipeline_id         UUID NOT NULL REFERENCES pipelines(id) ON DELETE RESTRICT,
+    pipeline_id         UUID NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
     status              run_status_enum NOT NULL DEFAULT 'pending',
     run_type            run_type_enum NOT NULL DEFAULT 'production',
     pipeline_snapshot   JSONB NOT NULL,
@@ -105,3 +105,20 @@ ALTER TABLE block_executions ADD COLUMN IF NOT EXISTS
     live_deps INT NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs (created_at DESC);
+
+-- Deleting a pipeline deletes its whole run history: pipeline -> runs
+-- (this FK) -> block_executions (already ON DELETE CASCADE). Existing
+-- databases were created with ON DELETE RESTRICT; switch them only when
+-- needed, so re-running this file doesn't rebuild the constraint.
+DO $$ BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'runs_pipeline_id_fkey'
+          AND conrelid = 'runs'::regclass
+          AND confdeltype <> 'c'
+    ) THEN
+        ALTER TABLE runs DROP CONSTRAINT runs_pipeline_id_fkey;
+        ALTER TABLE runs ADD CONSTRAINT runs_pipeline_id_fkey
+            FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE;
+    END IF;
+END $$;

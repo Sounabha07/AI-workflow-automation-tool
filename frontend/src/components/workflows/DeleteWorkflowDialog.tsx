@@ -25,21 +25,21 @@ export function DeleteWorkflowDialog({
     },
     onError: (err, p) => {
       onClose();
-      if (err instanceof ApiError && err.status === 409) {
-        // Expected: runs reference the pipeline (ON DELETE RESTRICT).
-        toast.error(`Can't delete ${p.name}, it has run history. Delete its runs first, or keep it.`);
-        return;
-      }
       toast.error(err instanceof ApiError ? `Couldn't delete ${p.name}: ${err.message}` : `Couldn't delete ${p.name}`);
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["pipelines"] }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["pipelines"] });
+      queryClient.invalidateQueries({ queryKey: ["runs"] });
+    },
   });
 
   return (
     <Dialog open={!!pipeline} onOpenChange={(open) => !open && !remove.isPending && onClose()}>
       <DialogContent hideClose>
         <DialogTitle>Delete {pipeline?.name}?</DialogTitle>
-        <DialogDescription>This can't be undone.</DialogDescription>
+        <DialogDescription>
+          This will permanently delete the workflow and all of its run history. This can't be undone.
+        </DialogDescription>
         <div className="mt-4 flex justify-end gap-2">
           <Button onClick={onClose} disabled={remove.isPending}>
             Cancel
