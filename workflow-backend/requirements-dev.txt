@@ -1,0 +1,2 @@
+# CI / local dev tools, on top of requirements.txt.
+ruff==0.16.8
