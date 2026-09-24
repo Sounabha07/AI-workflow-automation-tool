@@ -1,6 +1,6 @@
 import { memo, useEffect } from "react";
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
-import { AlertTriangle, Check, SkipForward } from "lucide-react";
+import { AlertTriangle, Check, Play, SkipForward } from "lucide-react";
 import { blockVisual, COLOR_TEXT_CLASS } from "@/lib/blockVisuals";
 import { nodeSubtitle, switchOutputs } from "@/lib/nodeSubtitle";
 import type { FlowNode } from "@/lib/definition";
@@ -41,6 +41,14 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
   const subtitle = nodeSubtitle(data);
 
   const openEditor = useEditorStore((s) => s.setOpenBlockId);
+  const runWorkflow = useEditorStore((s) => s.runWorkflow);
+
+  // A manual trigger has no parameters, so activating it runs the workflow
+  // instead of opening the block editor. This always runs the WHOLE workflow,
+  // exactly like "Run workflow": with more trigger types or several triggers
+  // per workflow, starting from this specific trigger would need a new run
+  // API (known scope boundary).
+  const activate = () => (visual.isTrigger ? runWorkflow?.() : openEditor(id));
 
   // Switch outputs (and so handles) can change after the node has already
   // mounted — adding/removing/renaming a rule — and React Flow caches each
@@ -57,9 +65,10 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
       <div
         role="button"
         tabIndex={0}
-        aria-label={`${id} block`}
-        onDoubleClick={() => openEditor(id)}
-        onKeyDown={(e) => e.key === "Enter" && openEditor(id)}
+        aria-label={visual.isTrigger ? `${id}: run workflow` : `${id} block`}
+        title={visual.isTrigger ? "Double-click to run the workflow" : undefined}
+        onDoubleClick={activate}
+        onKeyDown={(e) => e.key === "Enter" && activate()}
         style={{
           height,
           width: NODE_WIDTH,
@@ -69,7 +78,10 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
           "relative grid cursor-pointer place-items-center border-2 bg-surface transition-colors",
           "focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
           BORDER_BY_STATUS[status],
-          selected && "shadow-[0_0_0_4px_var(--accent-bg)] border-accent"
+          // Selection is a halo; the accent border only replaces an idle
+          // border, so a selected node still shows its run status.
+          selected && "shadow-[0_0_0_4px_var(--accent-bg)]",
+          selected && (status === "idle" || status === "ready") && "border-accent"
         )}
       >
         {/* Always rendered (even for triggers) so a drop still resolves to a
@@ -86,6 +98,14 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
 
         <Icon className={cn("h-8 w-8", COLOR_TEXT_CLASS[visual.color], status === "skipped" && "opacity-45")} />
 
+        {visual.isTrigger && (
+          <span
+            aria-hidden="true"
+            className="absolute -bottom-2 -right-2 grid h-5 w-5 place-items-center rounded-full border-2 border-canvas bg-trigger text-white"
+          >
+            <Play className="h-2.5 w-2.5 fill-current" />
+          </span>
+        )}
         {status === "succeeded" && (
           <span className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full border-2 border-canvas bg-ok text-white">
             <Check className="h-3 w-3" />

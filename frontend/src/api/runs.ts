@@ -33,7 +33,7 @@ export function getRunBlock(runId: string, blockId: string): Promise<BlockExecut
 export function triggerRun(
   pipeline_id: string,
   input_data: Record<string, unknown> = {}
-): Promise<{ run_id: string; status: string }> {
+): Promise<{ run_id: string; status: string; pipeline_is_active: boolean }> {
   return apiFetch("/runs", { method: "POST", body: { pipeline_id, input_data } });
 }
 

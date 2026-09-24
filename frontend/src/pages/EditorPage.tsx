@@ -9,6 +9,7 @@ import { ApiError } from "@/api/client";
 import type { RunEvent, WorkflowDefinition } from "@/api/types";
 import { definitionToFlow, flowToDefinition } from "@/lib/definition";
 import { useEditorStore, type BlockRuntimeState } from "@/store/editor";
+import { applyPipelineActive } from "@/lib/pipelineCache";
 import { useRunEvents } from "@/hooks/useRunEvents";
 import { useBlockSchemas, schemaFor } from "@/hooks/useBlockSchemas";
 import { Switch } from "@/components/ui/switch";
@@ -165,6 +166,17 @@ function EditorPageInner() {
 
   useRunEvents(activeRunId, onRunEvent);
 
+  // Let a trigger node start the same flow as the "Run workflow" button. The
+  // ref keeps the registered function stable while always calling the latest
+  // handleRunWorkflow (which closes over the current nodes, edges and dirty).
+  const runWorkflowRef = useRef<() => void>(() => {});
+  runWorkflowRef.current = () => handleRunWorkflow();
+  const setRunWorkflow = useEditorStore((s) => s.setRunWorkflow);
+  useEffect(() => {
+    setRunWorkflow(() => runWorkflowRef.current());
+    return () => setRunWorkflow(null);
+  }, [setRunWorkflow]);
+
   // Warn on navigation away with unsaved changes (B6).
   useEffect(() => {
     if (!dirty) return;
@@ -226,7 +238,9 @@ function EditorPageInner() {
   async function startRun(targetPipelineId: string, definition: WorkflowDefinition, inputData: Record<string, unknown> = {}) {
     setRunning(true);
     try {
-      const { run_id } = await triggerRun(targetPipelineId, inputData);
+      const { run_id, pipeline_is_active } = await triggerRun(targetPipelineId, inputData);
+      // POST /runs switches the workflow on; show it without waiting for a refetch.
+      applyPipelineActive(queryClient, targetPipelineId, pipeline_is_active);
       setActiveRun(run_id);
       resetBlockStates(
         Object.fromEntries(
@@ -247,6 +261,7 @@ function EditorPageInner() {
   }
 
   function handleRunWorkflow() {
+    if (running) return;
     const definition = flowToDefinition(nodes, edges);
 
     if (mode === "run") {

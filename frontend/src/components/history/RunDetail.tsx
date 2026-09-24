@@ -7,6 +7,7 @@ import { getRunBlocks } from "@/api/runs";
 import { triggerRun } from "@/api/runs";
 import type { RunListItem } from "@/api/types";
 import { ApiError } from "@/api/client";
+import { applyPipelineActive } from "@/lib/pipelineCache";
 import { Button } from "@/components/ui/button";
 import { retryHint } from "@/lib/errorHints";
 import { STATUS_DOT_CLASS, STATUS_LABEL } from "@/lib/statusVisuals";
@@ -23,7 +24,8 @@ export function RunDetail({ run }: { run: RunListItem }) {
 
   const runAgain = useMutation({
     mutationFn: () => triggerRun(run.pipeline_id, run.input_data ?? {}),
-    onSuccess: () => {
+    onSuccess: ({ pipeline_is_active }) => {
+      applyPipelineActive(queryClient, run.pipeline_id, pipeline_is_active);
       toast.success("Run started");
       queryClient.invalidateQueries({ queryKey: ["runs"] });
     },

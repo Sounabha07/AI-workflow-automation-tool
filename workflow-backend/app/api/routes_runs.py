@@ -217,7 +217,9 @@ async def list_runs(
 @router.post("", status_code=202)
 async def trigger_run(body: TriggerRunRequest) -> dict:
     # Manual runs are always allowed, regardless of pipelines.is_active.
-    # is_active only gates automatic triggers (webhook, schedule).
+    # is_active only gates automatic triggers (webhook, schedule). Running a
+    # workflow manually also switches it on (never off); POST /runs/test
+    # deliberately leaves is_active alone.
     conn = await get_connection()
     try:
         pipeline = await conn.fetchrow(
@@ -231,8 +233,10 @@ async def trigger_run(body: TriggerRunRequest) -> dict:
     run_id = await engine.start_run(
         str(body.pipeline_id),
         input_data=body.input_data,
+        activate=True,
     )
-    return {"run_id": run_id, "status": "running"}
+    # Activation committed with the run, so the pipeline is active now.
+    return {"run_id": run_id, "status": "running", "pipeline_is_active": True}
 
 
 @router.get("/{run_id}", response_model=RunDetailResponse)

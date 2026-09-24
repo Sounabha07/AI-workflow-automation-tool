@@ -67,7 +67,8 @@ def mask_sensitive(config: dict, schema: dict) -> dict:
 async def start_run(
     pipeline_id: str,
     run_type: str = "production",
-    input_data: dict = None
+    input_data: dict = None,
+    activate: bool = False,
 ) -> str:
     """Reads the pipeline definition FROM THE DATABASE (never passed in
     directly), creates the run + all its block_execution rows with
@@ -76,7 +77,8 @@ async def start_run(
 
     Manual runs are always allowed. pipelines.is_active only gates
     automatic triggers (webhook, schedule), which must check it before
-    calling this."""
+    calling this. With activate=True the pipeline is also switched on, in
+    the same transaction as the run; it is never switched off here."""
     conn = await get_connection()
     try:
         pipeline = await conn.fetchrow(
@@ -91,6 +93,13 @@ async def start_run(
 
         ready_block_ids = []
         async with conn.transaction():
+            if activate:
+                # Doesn't touch updated_at: activation is a setting, not an
+                # edit (same as PATCH), so it never triggers stale-edit warnings.
+                await conn.execute(
+                    "UPDATE pipelines SET is_active = TRUE WHERE id = $1 AND NOT is_active",
+                    pipeline_id,
+                )
             run_id = await conn.fetchval(
                 """
                 INSERT INTO runs (pipeline_id, run_type, pipeline_snapshot,
