@@ -85,14 +85,21 @@ export function DataView({ data, mode, baseId }: { data: unknown; mode: ViewMode
   if (mode === "json") return <JsonView data={data} />;
 
   if (mode === "table") {
-    const rows = data && typeof data === "object" && !Array.isArray(data) ? flatten(data as Record<string, unknown>) : [["value", data] as [string, unknown]];
+    const isObject = !!data && typeof data === "object" && !Array.isArray(data);
+    const rows = isObject ? flatten(data as Record<string, unknown>) : [["value", data] as [string, unknown]];
     return (
       <table className="w-full border-collapse text-xs">
         <tbody>
           {rows.map(([k, v]) => (
-            <tr key={k}>
+            <tr
+              key={k}
+              draggable
+              title="Drag into a parameter"
+              onDragStart={(e) => e.dataTransfer.setData(EXPRESSION_MIME, buildExpression(baseId, isObject ? k : ""))}
+              className="cursor-grab hover:bg-accent-bg [&:hover_td:first-child]:text-accent"
+            >
               <td className="w-[45%] border-b border-line py-1.5 pr-1 align-top font-mono text-ink-2">{k}</td>
-              <td className="border-b border-line py-1.5 align-top font-mono">{JSON.stringify(v)}</td>
+              <td className="break-all border-b border-line py-1.5 align-top font-mono">{JSON.stringify(v)}</td>
             </tr>
           ))}
         </tbody>

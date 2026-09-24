@@ -150,7 +150,8 @@ async def is_run_failed(run_id: str) -> bool:
 
 async def get_block_context(run_id: str, block_id: str) -> dict:
     """Raises ValueError when a {{ }} reference can't be resolved."""
-    from engine.resolver import build_run_state, resolve
+    from blocks.registry import get_block_class
+    from engine.resolver import build_run_state, resolve, structure_json_fields
 
     conn = await get_connection()
     try:
@@ -179,7 +180,9 @@ async def get_block_context(run_id: str, block_id: str) -> dict:
     run_state = await build_run_state(run_id)
 
     # substitute any {{block_id.field}} placeholders with real values
-    resolved_config = resolve(raw_config, run_state)
+    # JSON fields are resolved structurally (see structure_json_fields).
+    schema = getattr(get_block_class(row["block_type"]), "schema", {})
+    resolved_config = resolve(structure_json_fields(raw_config, schema), run_state)
 
     # Input blocks receive the run's input_data as their values. Injected
     # after resolution so user-supplied values are never treated as templates.

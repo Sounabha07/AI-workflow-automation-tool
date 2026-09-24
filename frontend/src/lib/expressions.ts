@@ -97,3 +97,66 @@ export function renameReferences<T>(value: T, oldId: string, newId: string): T {
   }
   return value;
 }
+
+/** Parses a JSON body template. `{{ }}` tokens outside a JSON string are
+ * quoted first, so `{"n": {{ a.count }}}` parses to `{"n": "{{ a.count }}"}`
+ * and the resolver can then keep that value's real type. Mirrors
+ * parse_json_template in engine/resolver.py. Returns undefined if invalid. */
+export function parseJsonTemplate(text: string): unknown {
+  let out = "";
+  let inString = false;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inString) {
+      out += ch;
+      if (ch === "\\") {
+        out += text[i + 1] ?? "";
+        i += 2;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      i++;
+      continue;
+    }
+    if (text.startsWith("{{", i)) {
+      const end = text.indexOf("}}", i + 2);
+      if (end === -1) return undefined;
+      out += JSON.stringify(text.slice(i, end + 2));
+      i = end + 2;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  try {
+    return JSON.parse(out);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Resolves every string inside a nested value; undefined if any token can't be resolved. */
+export function resolveDeep(value: unknown, outputs: Record<string, unknown>): unknown {
+  if (typeof value === "string") return value.includes("{{") ? resolveExpression(value, outputs) : value;
+  if (Array.isArray(value)) {
+    const items = value.map((v) => resolveDeep(v, outputs));
+    return items.some((v) => v === undefined) ? undefined : items;
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      const r = resolveDeep(v, outputs);
+      if (r === undefined) return undefined;
+      out[k] = r;
+    }
+    return out;
+  }
+  return value;
+}

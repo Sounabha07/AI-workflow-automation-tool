@@ -40,6 +40,13 @@ export function ParametersPane({
   const [idDraft, setIdDraft] = useState(node.id);
   const [idError, setIdError] = useState("");
 
+  // Display and show_when must read the same state. A saved config may omit a
+  // field (its schema default applies), so merge the defaults in first.
+  const effectiveConfig: Record<string, unknown> = { ...node.data.config };
+  for (const f of schema?.fields ?? []) {
+    if (effectiveConfig[f.name] === undefined && f.default !== undefined) effectiveConfig[f.name] = f.default;
+  }
+
   const handleFieldChange = (name: string, value: unknown) => {
     const before = node.data.blockType === "switch" ? switchOutputs(node.data.config) : [];
     updateNodeConfig(node.id, (c) => ({ ...c, [name]: value }));
@@ -93,7 +100,7 @@ export function ParametersPane({
         </div>
         <TabsContent value="params" className="min-h-0 flex-1 overflow-auto p-4">
           {(schema?.fields ?? []).map((f) => (
-            <FieldRenderer key={f.name} field={f} config={node.data.config} outputs={outputs} onChange={handleFieldChange} />
+            <FieldRenderer key={f.name} field={f} config={effectiveConfig} outputs={outputs} onChange={handleFieldChange} />
           ))}
           {(schema?.fields ?? []).length === 0 && (
             <p className="text-[13px] text-ink-3">This block has no parameters.</p>

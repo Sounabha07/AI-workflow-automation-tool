@@ -5,6 +5,7 @@ import { noDataText } from "@/lib/noDataText";
 import { DataView, type ViewMode } from "./DataView";
 import type { FlowEdge, FlowNode } from "@/lib/definition";
 import type { NodeRuntimeStatus } from "@/store/editor";
+import { cn } from "@/lib/utils";
 
 export interface BlockDataEntry {
   status: NodeRuntimeStatus;
@@ -112,7 +113,7 @@ export function ModeToggle({ mode, onModeChange }: { mode: ViewMode; onModeChang
         <button
           key={m}
           onClick={() => onModeChange(m)}
-          className={`border-0 bg-surface px-2.5 py-1 text-xs capitalize text-ink-2 ${mode === m ? "bg-ink text-white" : ""}`}
+          className={cn("border-0 bg-surface px-2.5 py-1 text-xs capitalize text-ink-2", mode === m && "bg-ink text-white")}
         >
           {m}
         </button>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ExpressionInput } from "./ExpressionInput";
-import { isWholeExpression, resolveExpression } from "@/lib/expressions";
+import { parseJsonTemplate, resolveDeep, resolveExpression } from "@/lib/expressions";
 import { EXPRESSION_MIME } from "@/lib/dnd";
 import { cn } from "@/lib/utils";
 
@@ -29,7 +29,7 @@ export function ScalarField({
 }) {
   const asString = value === undefined || value === null ? "" : typeof value === "string" ? value : JSON.stringify(value);
   const [mode, setMode] = useState<"fixed" | "expression">(
-    typeof value === "string" && isWholeExpression(value) ? "expression" : "fixed"
+    typeof value === "string" && value.includes("{{") ? "expression" : "fixed"
   );
   const [jsonText, setJsonText] = useState(() =>
     fieldType === "json" && typeof value !== "string" ? JSON.stringify(value ?? {}, null, 2) : asString
@@ -44,11 +44,36 @@ export function ScalarField({
     e.preventDefault();
     setDropHover(false);
     const expr = e.dataTransfer.getData(EXPRESSION_MIME);
+    if (fieldType === "json") {
+      // Add the dropped field as a new key of the body object, instead of
+      // replacing the whole body with a single expression string.
+      const current = parseJsonTemplate(jsonText.trim() || "{}");
+      if (current && typeof current === "object" && !Array.isArray(current)) {
+        const obj = current as Record<string, unknown>;
+        const base = expr.match(/\.(\w+)\s*\}\}$/)?.[1] ?? "value";
+        let key = base;
+        for (let n = 2; key in obj; n++) key = `${base}_${n}`;
+        const next = { ...obj, [key]: expr };
+        setJsonText(JSON.stringify(next, null, 2));
+        setJsonError(null);
+        onChange(next);
+        return;
+      }
+    }
     setMode("expression");
     onChange(expr);
   };
 
-  const result = mode === "expression" ? resolveExpression(asString, outputs) : undefined;
+  // A JSON body is resolved value by value, so a value that is exactly one
+  // {{ }} expression keeps its real type (number, boolean, object).
+  const jsonTemplate =
+    fieldType === "json" ? parseJsonTemplate(mode === "expression" ? asString : jsonText) : undefined;
+  const showResult = mode === "expression" || (fieldType === "json" && jsonText.includes("{{"));
+  const result = !showResult
+    ? undefined
+    : fieldType === "json" && jsonTemplate !== undefined
+      ? resolveDeep(jsonTemplate, outputs)
+      : resolveExpression(asString, outputs);
 
   return (
     <div
@@ -74,7 +99,14 @@ export function ScalarField({
         >
           <button
             type="button"
-            onClick={() => setMode("fixed")}
+            onClick={() => {
+              if (fieldType === "json" && mode === "expression") {
+                const parsed = typeof value === "string" ? parseJsonTemplate(value) : value;
+                setJsonText(parsed === undefined ? asString : JSON.stringify(parsed, null, 2));
+                if (parsed !== undefined && typeof value === "string") onChange(parsed);
+              }
+              setMode("fixed");
+            }}
             className={cn("px-1.5 py-0.5 text-[11px] text-ink-3", mode === "fixed" && "bg-ink text-white")}
           >
             Fixed
@@ -102,11 +134,12 @@ export function ScalarField({
             onChange={(e) => {
               const text = e.target.value;
               setJsonText(text);
-              try {
-                onChange(JSON.parse(text));
-                setJsonError(null);
-              } catch {
+              const parsed = parseJsonTemplate(text);
+              if (parsed === undefined) {
                 setJsonError("Invalid JSON");
+              } else {
+                onChange(parsed);
+                setJsonError(null);
               }
             }}
           />
@@ -129,8 +162,8 @@ export function ScalarField({
       </div>
       {jsonError && mode === "fixed" && <div className="mt-1 text-xs text-err">{jsonError}</div>}
 
-      {mode === "expression" && (
-        <div className="mt-1.5 font-mono text-xs text-ink-3">
+      {showResult && (
+        <div className="mt-1.5 break-all font-mono text-xs text-ink-3">
           Result:{" "}
           <b className="font-medium text-ok">
             {result === undefined ? "test the upstream block to preview" : JSON.stringify(result)}
