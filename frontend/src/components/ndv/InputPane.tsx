@@ -63,7 +63,7 @@ export function InputPane({
   const nodeById = (id: string) => nodes.find((n) => n.id === id);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <PaneHead mode={mode} onModeChange={onModeChange} />
       <div className="min-h-0 flex-1 overflow-auto p-4">
         {parents.length === 0 ? (

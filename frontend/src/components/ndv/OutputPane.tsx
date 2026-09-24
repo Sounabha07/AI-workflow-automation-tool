@@ -36,7 +36,7 @@ export function OutputPane({
   onModeChange: (mode: ViewMode) => void;
 }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex h-12 items-center gap-2 border-b border-line px-4">
         <h3 className="m-0 text-xs font-semibold text-ink-2">Output</h3>
         <span className="flex-1" />

@@ -68,9 +68,9 @@ export function BlockEditor({
             Back to canvas
           </button>
         </div>
-        <div className="grid min-h-0 flex-1 grid-cols-[1fr_minmax(380px,440px)_1fr] overflow-hidden rounded-xl bg-panel">
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(380px,440px)_minmax(0,1fr)] overflow-hidden rounded-xl bg-panel">
           <InputPane currentBlockId={node.id} nodes={nodes} edges={edges} data={inputData} mode={inMode} onModeChange={setInMode} />
-          <div className="flex min-h-0 flex-col border-x border-line bg-surface">
+          <div className="flex min-h-0 min-w-0 flex-col border-x border-line bg-surface">
             <ParametersPane
               node={node}
               schema={schema}

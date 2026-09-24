@@ -43,7 +43,7 @@ function SchemaRows({ obj, prefix, baseId, depth }: { obj: Record<string, unknow
           >
             <Icon className="h-3.5 w-3.5 flex-none text-ink-3" />
             <span className="k font-mono text-xs">{k}</span>
-            <span className="ml-auto overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-ink-3">
+            <span className="ml-auto min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-ink-3">
               {JSON.stringify(v)}
             </span>
           </div>
