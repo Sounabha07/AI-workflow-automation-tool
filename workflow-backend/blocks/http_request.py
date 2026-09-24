@@ -322,6 +322,15 @@ class HttpRequestBlock(BaseBlock):
 
             if content_type == "json":
                 body_data = config.get("body_json", {})
+                if isinstance(body_data, str):
+                    # Already JSON text (e.g. one expression that resolved to a
+                    # JSON string): decode it so it is encoded only once below.
+                    try:
+                        body_data = json.loads(body_data)
+                    except json.JSONDecodeError as e:
+                        raise FatalError(
+                            f"HTTP Request block: Body (JSON) is not valid JSON: {e}"
+                        )
                 body_bytes = json.dumps(body_data).encode("utf-8")
                 headers.setdefault("Content-Type", "application/json")
 
