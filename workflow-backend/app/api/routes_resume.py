@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 import engine
 from db import get_connection
+from app.errors import NotFoundError
 from app.api.models import ResumeRequest, ResumeResponse
 
 router = APIRouter()
@@ -26,11 +27,7 @@ async def resume_block(token: UUID, body: ResumeRequest) -> ResumeResponse:
         await conn.close()
 
     if row is None:
-        from fastapi.responses import JSONResponse
-        return JSONResponse(
-            status_code=404,
-            content={"detail": f"No block execution found for token {token}"},
-        )
+        raise NotFoundError(f"No block execution found for token {token}")
 
     if row["status"] != "waiting":
         return JSONResponse(

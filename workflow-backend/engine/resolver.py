@@ -13,7 +13,8 @@ PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}")
 
 
 def _lookup(path: str, run_state: dict) -> Any:
-    segments = path.strip().split(".")
+    path = path.strip()
+    segments = path.split(".")
     block_id, *field_path = segments
 
     if block_id not in run_state:
@@ -63,9 +64,12 @@ def resolve(value: Any, run_state: dict) -> Any:
 
 
 async def build_run_state(run_id: str) -> dict:
-    """Reads every finished block's output for this run from the DB."""
+    """Starts from runs.seed_outputs (test-step runs only), then overlays
+    every finished block's output for this run from the DB."""
     conn = await get_connection()
     try:
+        seed = await conn.fetchval("SELECT seed_outputs FROM runs WHERE id = $1", run_id)
+        state = (json.loads(seed) if isinstance(seed, str) else seed) or {}
         rows = await conn.fetch(
             """
             SELECT block_id, output
@@ -74,13 +78,14 @@ async def build_run_state(run_id: str) -> dict:
             """,
             run_id,
         )
-        return {
+        state.update({
             r["block_id"]: (
                 json.loads(r["output"])
                 if isinstance(r["output"], str)
                 else r["output"]
             )
             for r in rows
-        }
+        })
+        return state
     finally:
         await conn.close()

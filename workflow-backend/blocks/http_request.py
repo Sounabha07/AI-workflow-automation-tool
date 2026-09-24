@@ -34,6 +34,7 @@ from blocks.registry import register_block
 
 HTTP_BLOCK_SCHEMA = {
     "name": "HTTP Request",
+    "category": "Actions",
     "description": "Make HTTP requests to any API or URL",
     "icon": "http",
     "fields": [
@@ -221,6 +222,10 @@ HTTP_BLOCK_SCHEMA = {
 # Block implementation                                                 #
 # ------------------------------------------------------------------ #
 
+# Response body kept in error messages; longer bodies are cut with a marker.
+MAX_ERROR_BODY_CHARS = 2000
+
+
 @register_block("http_request")
 class HttpRequestBlock(BaseBlock):
     """
@@ -390,7 +395,9 @@ class HttpRequestBlock(BaseBlock):
 
     @staticmethod
     def _raise_for_status(status: int, body: bytes) -> None:
-        body_text = body.decode("utf-8", errors="replace")[:200]
+        body_text = body.decode("utf-8", errors="replace")
+        if len(body_text) > MAX_ERROR_BODY_CHARS:
+            body_text = body_text[:MAX_ERROR_BODY_CHARS] + "… (truncated)"
 
         if status == 429:
             raise RetryableError(

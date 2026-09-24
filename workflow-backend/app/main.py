@@ -9,6 +9,9 @@ from app.api.routes_pipelines import router as pipelines_router
 from app.api.routes_runs import router as runs_router
 from app.api.routes_resume import router as resume_router
 from app.api.routes_blocks import router as blocks_router
+from app.api.routes_ws import router as ws_router
+from app.errors import NotFoundError
+from app.validation import InvalidWorkflowError
 
 
 @asynccontextmanager
@@ -32,6 +35,22 @@ app.include_router(pipelines_router, prefix="/pipelines",
 app.include_router(runs_router, prefix="/runs", tags=["runs"])
 app.include_router(resume_router, prefix="/resume", tags=["resume"])
 app.include_router(blocks_router, prefix="/blocks", tags=["blocks"])
+app.include_router(ws_router, tags=["ws"])
+
+
+@app.exception_handler(InvalidWorkflowError)
+async def invalid_workflow_handler(request: Request, exc: InvalidWorkflowError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": "Invalid workflow", "problems": exc.problems},
+    )
+
+
+@app.exception_handler(NotFoundError)
+async def not_found_handler(request: Request, exc: NotFoundError):
+    return JSONResponse(
+        status_code=404, content={"detail": str(exc)}
+    )
 
 
 @app.exception_handler(ValueError)

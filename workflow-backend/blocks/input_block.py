@@ -7,6 +7,7 @@ from blocks.registry import register_block
 class InputBlock(BaseBlock):
     schema = {
         "name": "Input",
+        "category": "Data",
         "description": (
             "Defines input fields that the user fills in when "
             "triggering a run. Downstream blocks reference values via "

@@ -7,6 +7,7 @@ from blocks.registry import register_block
 class ManualTriggerBlock(BaseBlock):
     schema = {
         "name": "Manual Trigger",
+        "category": "Triggers",
         "description": "Starts the pipeline when triggered manually.",
         "fields": []
     }
