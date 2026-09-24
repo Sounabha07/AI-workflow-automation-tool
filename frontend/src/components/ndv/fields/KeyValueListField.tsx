@@ -31,27 +31,32 @@ export function KeyValueListField({
     <div className="mb-4">
       <div className="mb-1.5 text-xs font-semibold text-ink-2">{label}</div>
       <div className="rounded-lg border border-line bg-panel p-2.5">
+        {pairs.length > 0 && (
+          <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_28px] items-start gap-2 mb-1.5 px-0.5 text-[11px] font-medium text-ink-3" aria-hidden="true">
+            <span>Key</span>
+            <span>Value</span>
+            <span />
+          </div>
+        )}
         {pairs.map((p, i) => (
-          <div key={i} className="mb-2.5 grid grid-cols-[110px_1fr_24px] items-start gap-2 last:mb-0">
+          <div key={i} className="mb-3 grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_28px] items-start gap-2">
             <Input
               aria-label="Key"
               value={p.key}
               onChange={(e) => updatePair(i, { key: e.target.value })}
-              className="mt-0"
             />
-            <div className="[&>div]:mb-0">
-              <ScalarField
-                label=""
-                value={p.value}
-                fieldType="string"
-                outputs={outputs}
-                onChange={(v) => updatePair(i, { value: v })}
-              />
-            </div>
+            <ScalarField
+              compact
+              label="Value"
+              value={p.value}
+              fieldType="string"
+              outputs={outputs}
+              onChange={(v) => updatePair(i, { value: v })}
+            />
             <button
               onClick={() => removePair(i)}
               aria-label="Remove"
-              className="mt-1.5 border-0 bg-transparent p-1 text-ink-3 hover:text-err"
+              className="grid h-[34px] place-items-center border-0 bg-transparent p-0 text-ink-3 hover:text-err"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>

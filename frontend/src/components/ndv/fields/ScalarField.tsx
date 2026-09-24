@@ -17,6 +17,7 @@ export function ScalarField({
   placeholder,
   sensitive,
   required,
+  compact,
 }: {
   label: string;
   value: unknown;
@@ -26,6 +27,10 @@ export function ScalarField({
   placeholder?: string;
   sensitive?: boolean;
   required?: boolean;
+  /** No label row, for inline use (e.g. a key/value row): the Fixed/Expression
+   * toggle floats on the input's top edge instead, so the input lines up with
+   * its neighbours. */
+  compact?: boolean;
 }) {
   const asString = value === undefined || value === null ? "" : typeof value === "string" ? value : JSON.stringify(value);
   const [mode, setMode] = useState<"fixed" | "expression">(
@@ -75,9 +80,40 @@ export function ScalarField({
       ? resolveDeep(jsonTemplate, outputs)
       : resolveExpression(asString, outputs);
 
+  const toggle = (
+    <span
+      className={cn(
+        "flex overflow-hidden rounded-md border border-line bg-surface opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100",
+        mode === "expression" && "opacity-100"
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          if (fieldType === "json" && mode === "expression") {
+            const parsed = typeof value === "string" ? parseJsonTemplate(value) : value;
+            setJsonText(parsed === undefined ? asString : JSON.stringify(parsed, null, 2));
+            if (parsed !== undefined && typeof value === "string") onChange(parsed);
+          }
+          setMode("fixed");
+        }}
+        className={cn("px-1.5 py-0.5 text-[11px] text-ink-3", mode === "fixed" && "bg-ink text-white")}
+      >
+        Fixed
+      </button>
+      <button
+        type="button"
+        onClick={() => setMode("expression")}
+        className={cn("px-1.5 py-0.5 text-[11px] text-ink-3", mode === "expression" && "bg-ink text-white")}
+      >
+        Expression
+      </button>
+    </span>
+  );
+
   return (
     <div
-      className="group mb-4"
+      className={cn("group", compact ? "relative" : "mb-4")}
       onDragOver={(e) => {
         if (acceptsDrop(e)) {
           e.preventDefault();
@@ -86,40 +122,17 @@ export function ScalarField({
       }}
       onDragLeave={() => setDropHover(false)}
     >
-      <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-ink-2">
-        <span>
-          {label}
-          {required && <span className="text-err"> *</span>}
-        </span>
-        <span
-          className={cn(
-            "flex overflow-hidden rounded-md border border-line opacity-0 transition-opacity group-hover:opacity-100",
-            mode === "expression" && "opacity-100"
-          )}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              if (fieldType === "json" && mode === "expression") {
-                const parsed = typeof value === "string" ? parseJsonTemplate(value) : value;
-                setJsonText(parsed === undefined ? asString : JSON.stringify(parsed, null, 2));
-                if (parsed !== undefined && typeof value === "string") onChange(parsed);
-              }
-              setMode("fixed");
-            }}
-            className={cn("px-1.5 py-0.5 text-[11px] text-ink-3", mode === "fixed" && "bg-ink text-white")}
-          >
-            Fixed
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("expression")}
-            className={cn("px-1.5 py-0.5 text-[11px] text-ink-3", mode === "expression" && "bg-ink text-white")}
-          >
-            Expression
-          </button>
-        </span>
-      </label>
+      {compact ? (
+        <div className="absolute -top-2.5 right-1.5 z-10">{toggle}</div>
+      ) : (
+        <label className="mb-1.5 flex items-center justify-between text-xs font-medium text-ink-2">
+          <span>
+            {label}
+            {required && <span className="text-err"> *</span>}
+          </span>
+          {toggle}
+        </label>
+      )}
 
       <div
         onDrop={handleDropOnFixed}
