@@ -17,6 +17,17 @@ class PatchPipelineRequest(BaseModel):
     is_active: bool
 
 
+class PipelineTrigger(BaseModel):
+    """One schedule or webhook trigger block, from the pipeline_triggers index."""
+    block_id: str
+    type: str  # "schedule" | "webhook"
+    webhook_url: str | None = None
+    cron: str | None = None
+    timezone: str | None = None
+    next_run_at: datetime | None = None
+    last_fired_at: datetime | None = None
+
+
 class PipelineResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
@@ -26,6 +37,7 @@ class PipelineResponse(BaseModel):
     is_template: bool
     created_at: datetime
     updated_at: datetime
+    triggers: list[PipelineTrigger] = []
 
 
 class PipelineListItem(BaseModel):
@@ -39,6 +51,10 @@ class PipelineListItem(BaseModel):
     last_run_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # "manual" | "schedule" | "webhook", from the definition's trigger block.
+    trigger_type: str = "manual"
+    # Soonest scheduled run; only set while the workflow is active.
+    next_run_at: datetime | None = None
 
 
 class LatestBlockOutput(BaseModel):
@@ -52,6 +68,8 @@ class LatestBlockOutput(BaseModel):
 class TriggerRunRequest(BaseModel):
     pipeline_id: UUID
     input_data: dict = {}
+    # Sample output for the trigger block, e.g. a webhook body to test with.
+    trigger_payload: dict | None = None
 
 
 class RunResponse(BaseModel):
@@ -64,6 +82,8 @@ class RunResponse(BaseModel):
     blocks_remaining: int
     error_summary: dict | None = None
     input_data: dict | None = None
+    trigger_type: str = "manual"
+    trigger_payload: dict | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -80,6 +100,7 @@ class RunListItem(BaseModel):
     pipeline_id: UUID
     pipeline_name: str
     status: str
+    trigger_type: str = "manual"
     input_data: dict | None = None
     error_summary: dict | None = None
     total_blocks: int
@@ -106,6 +127,9 @@ class BlockExecutionResponse(BaseModel):
     error: dict | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    # Wait for Input blocks only.
+    resume_url: str | None = None
+    wait_deadline: datetime | None = None
 
 
 class TestStepRequest(BaseModel):
@@ -113,20 +137,32 @@ class TestStepRequest(BaseModel):
     block_id: str
     input_data: dict = {}
     definition: dict | None = None
+    # Output for the trigger block when it is the one tested, or seeded as
+    # its output when testing a block downstream of it.
+    trigger_payload: dict | None = None
 
 
 class TestStepResponse(BaseModel):
     run_id: UUID
 
 
-class ResumeRequest(BaseModel):
-    result_data: dict
-
-
 class ResumeResponse(BaseModel):
-    block_id: str
     run_id: UUID
+    block_id: str
     status: str
+
+
+class WebhookAcceptedResponse(BaseModel):
+    run_id: UUID
+
+
+class SchedulePreviewRequest(BaseModel):
+    cron: str
+    timezone: str = "UTC"
+
+
+class SchedulePreviewResponse(BaseModel):
+    times: list[datetime]
 
 
 class BlockSchemaResponse(BaseModel):
