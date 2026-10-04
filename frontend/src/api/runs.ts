@@ -1,4 +1,4 @@
-import { apiFetch } from "./client";
+import { ApiError, apiFetch } from "./client";
 import type {
   BlockExecutionResponse,
   RunDetailResponse,
@@ -42,6 +42,26 @@ export interface TestStepBody {
   block_id: string;
   input_data?: Record<string, unknown>;
   definition?: WorkflowDefinition;
+}
+
+/** POSTs a JSON object to a waiting block's resume URL. It's the full URL
+ * the backend hands out, so this works whatever PUBLIC_BASE_URL is. */
+export async function resumeBlock(resumeUrl: string, data: Record<string, unknown>): Promise<void> {
+  const res = await fetch(resumeUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    let detail = `Resume failed with status ${res.status}`;
+    try {
+      const body = await res.json();
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch {
+      // Non-JSON error body; keep the status message.
+    }
+    throw new ApiError(res.status, detail);
+  }
 }
 
 export function testStep(body: TestStepBody): Promise<{ run_id: string }> {

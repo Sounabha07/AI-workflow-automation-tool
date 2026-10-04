@@ -83,7 +83,22 @@ export type BlockExecutionStatus =
   | "succeeded"
   | "failed"
   | "skipped"
-  | "waiting";
+  | "waiting"
+  | "cancelled";
+
+/** Which kind of trigger started a run (or starts a workflow). */
+export type TriggerType = "manual" | "schedule" | "webhook";
+
+/** A schedule or webhook trigger block, from the backend's trigger index. */
+export interface PipelineTrigger {
+  block_id: string;
+  type: "schedule" | "webhook";
+  webhook_url: string | null;
+  cron: string | null;
+  timezone: string | null;
+  next_run_at: string | null;
+  last_fired_at: string | null;
+}
 
 export interface PipelineListItem {
   id: string;
@@ -95,6 +110,9 @@ export interface PipelineListItem {
   last_run_at: string | null;
   created_at: string;
   updated_at: string;
+  trigger_type: TriggerType;
+  /** Soonest scheduled run; null unless the workflow is active and scheduled. */
+  next_run_at: string | null;
 }
 
 export interface PipelineResponse {
@@ -105,6 +123,7 @@ export interface PipelineResponse {
   is_template: boolean;
   created_at: string;
   updated_at: string;
+  triggers: PipelineTrigger[];
 }
 
 export interface BlockError {
@@ -142,6 +161,7 @@ export interface RunListItem {
   pipeline_id: string;
   pipeline_name: string;
   status: RunStatus;
+  trigger_type: TriggerType;
   input_data: Record<string, unknown> | null;
   error_summary: RunErrorSummary | null;
   total_blocks: number;
@@ -166,6 +186,8 @@ export interface RunResponse {
   blocks_remaining: number;
   error_summary: RunErrorSummary | null;
   input_data: Record<string, unknown> | null;
+  trigger_type: TriggerType;
+  trigger_payload: Record<string, unknown> | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -187,6 +209,9 @@ export interface BlockExecutionResponse {
   error: BlockError | null;
   started_at: string | null;
   finished_at: string | null;
+  /** Wait for Input blocks only. */
+  resume_url: string | null;
+  wait_deadline: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +225,9 @@ export interface BlockStatusEvent {
   status: BlockExecutionStatus;
   retry_count: number;
   error: BlockError | null;
+  /** Sent with a wait block's "waiting" event. */
+  resume_url?: string;
+  wait_deadline?: string;
 }
 
 export interface RunStatusEvent {

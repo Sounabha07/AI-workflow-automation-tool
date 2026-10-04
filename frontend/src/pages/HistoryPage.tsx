@@ -6,6 +6,7 @@ import { listRuns } from "@/api/runs";
 import type { RunListItem, RunStatus } from "@/api/types";
 import { StatusPill } from "@/components/StatusPill";
 import { RelativeTime } from "@/components/RelativeTime";
+import { TriggerBadge } from "@/components/TriggerBadge";
 import { RunDetail } from "@/components/history/RunDetail";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useRunEvents } from "@/hooks/useRunEvents";
@@ -123,7 +124,10 @@ export function HistoryPage() {
             >
               <StatusPill status={r.status} />
               <div className="min-w-0">
-                <div className="font-semibold">{r.pipeline_name}</div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate font-semibold">{r.pipeline_name}</span>
+                  <TriggerBadge type={r.trigger_type} />
+                </div>
                 {r.error_summary && (
                   <div className="overflow-hidden text-ellipsis whitespace-nowrap text-xs text-[#B0342B]">
                     {r.error_summary.block_id}: {firstSentence(r.error_summary.message)}

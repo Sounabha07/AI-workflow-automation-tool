@@ -41,6 +41,10 @@ export function getPipelineRuns(id: string): Promise<RunResponse[]> {
   return apiFetch(`/pipelines/${id}/runs`);
 }
 
+export function previewSchedule(cron: string, timezone: string): Promise<{ times: string[] }> {
+  return apiFetch("/schedule/preview", { method: "POST", body: { cron, timezone } });
+}
+
 export function deletePipeline(id: string): Promise<void> {
   return apiFetch(`/pipelines/${id}`, { method: "DELETE" });
 }

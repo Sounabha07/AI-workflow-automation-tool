@@ -124,6 +124,8 @@ function EditorPageInner() {
         retryCount: b.retry_count,
         startedAt: b.started_at,
         finishedAt: b.finished_at,
+        resumeUrl: b.resume_url,
+        waitDeadline: b.wait_deadline,
       };
     }
     resetBlockStates(states);
@@ -138,6 +140,8 @@ function EditorPageInner() {
     (event: RunEvent) => {
       if (event.type === "block_status") {
         applyBlockStatusEvent(event);
+        // A tested wait block parks rather than finishing; the test itself is done.
+        if (event.status === "waiting") setTestingBlockId((cur) => (cur === event.block_id ? null : cur));
         if (event.status === "succeeded" || event.status === "failed") {
           getRunBlock(event.run_id, event.block_id).then((full) => {
             setBlockState(event.block_id, {
@@ -348,6 +352,8 @@ function EditorPageInner() {
             error: st?.error ?? null,
             startedAt: st?.startedAt,
             finishedAt: st?.finishedAt,
+            resumeUrl: st?.resumeUrl,
+            waitDeadline: st?.waitDeadline,
           },
         ];
       }

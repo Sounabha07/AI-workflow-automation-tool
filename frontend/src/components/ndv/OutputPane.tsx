@@ -1,8 +1,9 @@
-import { AlertTriangle, CircleCheck, FlaskConical, Loader2, SkipForward, Square } from "lucide-react";
+import { AlertTriangle, Ban, CircleCheck, FlaskConical, Loader2, SkipForward, Square } from "lucide-react";
 import type { BlockError } from "@/api/types";
 import { retryHint } from "@/lib/errorHints";
 import { DataView, type ViewMode } from "./DataView";
 import { ModeToggle } from "./InputPane";
+import { ResumePanel } from "./ResumePanel";
 import type { NodeRuntimeStatus } from "@/store/editor";
 
 function Empty({ icon: Icon, children }: { icon: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
@@ -23,6 +24,8 @@ export function OutputPane({
   error,
   durationMs,
   stoppedAtBlockId,
+  resumeUrl,
+  waitDeadline,
   mode,
   onModeChange,
 }: {
@@ -32,6 +35,8 @@ export function OutputPane({
   error: BlockError | null;
   durationMs: number | null;
   stoppedAtBlockId?: string;
+  resumeUrl?: string | null;
+  waitDeadline?: string | null;
   mode: ViewMode;
   onModeChange: (mode: ViewMode) => void;
 }) {
@@ -57,7 +62,11 @@ export function OutputPane({
             </pre>
             <div className="mt-2 text-xs text-ink-2">{retryHint(error)}</div>
           </div>
-        ) : status === "not_run" || status === "pending" || status === "waiting" ? (
+        ) : status === "waiting" ? (
+          <ResumePanel blockId={blockId} resumeUrl={resumeUrl} waitDeadline={waitDeadline} />
+        ) : status === "cancelled" ? (
+          <Empty icon={Ban}>Cancelled: the run failed in another branch while this block was waiting.</Empty>
+        ) : status === "not_run" || status === "pending" ? (
           <Empty icon={Square}>
             {stoppedAtBlockId
               ? `Didn't run because the workflow stopped at ${stoppedAtBlockId}.`

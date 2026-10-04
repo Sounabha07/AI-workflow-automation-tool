@@ -1,4 +1,4 @@
-import { FormInput, Globe, Play, Split, type LucideIcon } from "lucide-react";
+import { Clock, FormInput, Globe, Hourglass, Play, Split, Webhook, type LucideIcon } from "lucide-react";
 
 export interface BlockVisual {
   label: string;
@@ -10,7 +10,10 @@ export interface BlockVisual {
 
 export const BLOCK_VISUALS: Record<string, BlockVisual> = {
   manual_trigger: { label: "Trigger", icon: Play, color: "trigger", isTrigger: true },
+  schedule_trigger: { label: "Schedule", icon: Clock, color: "trigger", isTrigger: true },
+  webhook_trigger: { label: "Webhook", icon: Webhook, color: "trigger", isTrigger: true },
   switch: { label: "Switch", icon: Split, color: "flow" },
+  wait_for_input: { label: "Wait", icon: Hourglass, color: "flow" },
   input_block: { label: "Input", icon: FormInput, color: "data" },
   http_request: { label: "HTTP", icon: Globe, color: "action" },
 };
