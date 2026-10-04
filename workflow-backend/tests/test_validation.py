@@ -1,3 +1,5 @@
+import pytest
+
 from app.validation import ancestors, validate_definition
 from tests.conftest import block
 
@@ -107,4 +109,90 @@ def test_ancestors_with_fan_in(switch_definition):
     d["blocks"]["big_call"]["next"] = ["join"]
     d["blocks"]["fallback_call"]["next"] = ["join"]
     assert ancestors(d, "join") == {"big_call", "fallback_call", "route", "trigger"}
+    assert validate_definition(d) == []
+
+
+# --- triggers, wait blocks, resume refs ---
+
+def wait_definition(notify_url="http://x/?link={{ resume.wait.url }}"):
+    """trigger -> notify -> wait -> after, where notify links to wait's resume URL."""
+    return {"blocks": {
+        "trigger": block("manual_trigger", ["notify"]),
+        "notify": block("http_request", ["wait"], ["trigger"], {"url": notify_url}),
+        "wait": block("wait_for_input", ["after"], ["notify"], {"timeout_seconds": 60}),
+        "after": block("http_request", [], ["wait"], {"url": "http://y/{{ wait.data.x }}"}),
+    }}
+
+
+def test_resume_ref_upstream_of_its_wait_is_valid_and_not_a_cycle():
+    assert validate_definition(wait_definition()) == []
+    assert validate_definition(wait_definition("{{ resume.wait.token }}")) == []
+
+
+@pytest.mark.parametrize("ref,fragment", [
+    ("{{ resume.notify.url }}", "doesn't name a Wait for Input block ('notify'"),
+    ("{{ resume.ghost.url }}", "('ghost' isn't one)"),
+    ("{{ resume }}", "doesn't name a Wait for Input block."),
+    ("{{ resume.wait }}", "must end in .token or .url"),
+    ("{{ resume.wait.secret }}", "must end in .token or .url"),
+])
+def test_bad_resume_refs(ref, fragment):
+    assert has_problem(validate_definition(wait_definition(f"http://x/{ref}")), "'notify'", fragment)
+
+
+def test_resume_is_a_reserved_block_id():
+    d = {"blocks": {
+        "t": block("manual_trigger", ["resume"]),
+        "resume": block("http_request", [], ["t"], {"url": "http://x"}),
+    }}
+    assert has_problem(validate_definition(d), "'resume' is reserved")
+
+
+def test_exactly_one_trigger():
+    assert has_problem(
+        validate_definition({"blocks": {"a": block("http_request", config={"url": "http://x"})}}),
+        "needs a trigger",
+    )
+    two = {"blocks": {
+        "m": block("manual_trigger"),
+        "h": block("webhook_trigger"),
+    }}
+    assert has_problem(validate_definition(two), "only one trigger", "h, m")
+
+
+@pytest.mark.parametrize("trigger_type", ["schedule_trigger", "webhook_trigger"])
+def test_every_trigger_type_is_a_root(trigger_type):
+    config = {"cron": "* * * * *"} if trigger_type == "schedule_trigger" else {}
+    d = {"blocks": {
+        "a": block("http_request", ["t"], config={"url": "http://x"}),
+        "t": block(trigger_type, [], ["a"], config),
+    }}
+    assert has_problem(validate_definition(d), "Trigger 't'", "incoming")
+
+
+@pytest.mark.parametrize("config,fragment", [
+    ({"cron": "every day"}, "exactly 5 fields"),
+    ({"cron": "99 * * * *"}, "not a valid cron"),
+    ({"cron": "0 9 * * *", "timezone": "Not/AZone"}, "Unknown timezone"),
+    ({}, "cron expression is required"),
+])
+def test_bad_schedules(config, fragment):
+    d = {"blocks": {"s": block("schedule_trigger", config=config)}}
+    assert has_problem(validate_definition(d), "Schedule 's'", fragment)
+
+
+def test_good_schedule_defaults_to_utc():
+    assert validate_definition({"blocks": {"s": block("schedule_trigger", config={"cron": "0 9 * * 1-5"})}}) == []
+
+
+@pytest.mark.parametrize("timeout", [0, 604801, None, "abc"])
+def test_bad_wait_timeouts(timeout):
+    d = wait_definition()
+    d["blocks"]["wait"]["config"]["timeout_seconds"] = timeout
+    assert has_problem(validate_definition(d), "Wait 'wait'", "timeout_seconds")
+
+
+def test_wait_timeout_expression_is_checked_at_run_time():
+    d = wait_definition()
+    d["blocks"]["wait"]["config"]["timeout_seconds"] = "{{ notify.data.ttl }}"
     assert validate_definition(d) == []
