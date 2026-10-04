@@ -122,3 +122,59 @@ DO $$ BEGIN
             FOREIGN KEY (pipeline_id) REFERENCES pipelines(id) ON DELETE CASCADE;
     END IF;
 END $$;
+
+-- ============================================================
+-- Wait-for-input blocks and schedule/webhook triggers.
+-- ============================================================
+
+-- A wait block whose run failed for another reason is cancelled, so a
+-- later resume can tell "too late" (410) from "unknown token" (404).
+-- ADD VALUE can't be used in the transaction that adds it, so nothing
+-- below references 'cancelled'.
+ALTER TYPE block_execution_status_enum ADD VALUE IF NOT EXISTS 'cancelled';
+
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS trigger_type TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS trigger_payload JSONB NULL;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS trigger_id UUID NULL;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS dedupe_key TEXT NULL;
+
+-- A derived index of the schedule/webhook trigger blocks in each pipeline's
+-- definition (which stays the source of truth). Rewritten by
+-- app/triggers.py on pipeline create/update and activation; pipeline
+-- delete cascades.
+CREATE TABLE IF NOT EXISTS pipeline_triggers (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pipeline_id     UUID NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    block_id        TEXT NOT NULL,
+    type            TEXT NOT NULL CHECK (type IN ('schedule', 'webhook')),
+    webhook_token   TEXT UNIQUE,
+    cron_expr       TEXT,
+    timezone        TEXT,
+    next_run_at     TIMESTAMPTZ,
+    last_fired_at   TIMESTAMPTZ,
+    UNIQUE (pipeline_id, block_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_triggers_due ON pipeline_triggers (next_run_at)
+    WHERE type = 'schedule';
+
+DO $$ BEGIN
+    ALTER TABLE runs ADD CONSTRAINT runs_trigger_id_fkey
+        FOREIGN KEY (trigger_id) REFERENCES pipeline_triggers(id) ON DELETE SET NULL;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+-- A webhook delivery id (X-GitHub-Delivery / Idempotency-Key) creates at
+-- most one run per trigger.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_runs_dedupe ON runs (trigger_id, dedupe_key)
+    WHERE dedupe_key IS NOT NULL;
+
+-- Supersede the never-used correlation_token / wait_timeout_at columns
+-- above, which are left in place so existing databases aren't rewritten.
+ALTER TABLE block_executions ADD COLUMN IF NOT EXISTS resume_token TEXT UNIQUE;
+ALTER TABLE block_executions ADD COLUMN IF NOT EXISTS wait_deadline TIMESTAMPTZ NULL;
+
+CREATE INDEX IF NOT EXISTS idx_block_executions_wait_deadline
+    ON block_executions (wait_deadline)
+    WHERE status = 'waiting';

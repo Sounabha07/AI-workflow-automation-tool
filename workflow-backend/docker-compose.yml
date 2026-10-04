@@ -29,6 +29,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://dag_user:dag_password@postgres:5432/dag_db
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
     volumes:
       - .:/app
     depends_on:
@@ -37,12 +38,28 @@ services:
       postgres:
         condition: service_healthy
 
+  # Enqueues the periodic tasks (wait timeouts, due schedules) every 15s;
+  # the worker runs them. The schedule file lives in /tmp so nothing is
+  # written into the bind-mounted repo.
+  beat:
+    build: .
+    command: celery -A tasks beat --loglevel=info --schedule /tmp/celerybeat-schedule
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://dag_user:dag_password@postgres:5432/dag_db
+    volumes:
+      - .:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+
   api:
     build: .
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       - DATABASE_URL=postgresql://dag_user:dag_password@postgres:5432/dag_db
       - REDIS_URL=redis://redis:6379/0
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
     ports:
       - "8000:8000"
     volumes:

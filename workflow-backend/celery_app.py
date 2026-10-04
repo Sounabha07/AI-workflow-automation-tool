@@ -17,6 +17,20 @@ celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
+    # Run by the beat service (docker-compose `beat`), executed by workers.
+    # A tick that sat in the queue past the next one is dropped, not run late.
+    beat_schedule={
+        "sweep-wait-timeouts": {
+            "task": "tasks.sweep_wait_timeouts",
+            "schedule": 15.0,
+            "options": {"expires": 14},
+        },
+        "fire-due-schedules": {
+            "task": "tasks.fire_due_schedules",
+            "schedule": 15.0,
+            "options": {"expires": 14},
+        },
+    },
 )
 
 # Worker is started with `-A tasks` so that circular import is not needed here.
