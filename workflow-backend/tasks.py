@@ -3,6 +3,7 @@ import logging
 
 import blocks  # noqa: F401 -- importing this registers every block
 import engine
+import engine.triggers
 from blocks.base import FatalError, RetryableError
 from blocks.registry import get_block_class
 from celery_app import celery_app
@@ -28,9 +29,10 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
     block_cls = get_block_class(context["block_type"])
     block = block_cls()
 
-    asyncio.run(engine.mark_running(
+    if not asyncio.run(engine.mark_running(
         run_id, block_id, context["config"], getattr(block_cls, "schema", {})
-    ))
+    )):
+        return  # already waiting or finished: a redelivered task
 
     # Inject the REAL run_id/block_id into config -- this is what makes
     # FailNTimesBlock's per-run counter unique automatically, no manual
@@ -42,7 +44,7 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
     config["block_id"] = block_id
 
     try:
-        output = asyncio.run(block.execute(config, input_data={}))
+        output = asyncio.run(block.execute(config, input_data=context["input_data"]))
     except RetryableError as e:
         if self.request.retries >= block_cls.max_retries:
             asyncio.run(engine.handle_block_failure(run_id, block_id, str(e), True, attempts))
@@ -65,4 +67,21 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
         ))
         return
     else:
-        asyncio.run(engine.handle_block_success(run_id, block_id, output))
+        if getattr(block_cls, "waits_for_input", False):
+            # Park it and return: no sleeping, no worker slot held.
+            asyncio.run(engine.mark_waiting(run_id, block_id, output["timeout_seconds"]))
+        else:
+            asyncio.run(engine.handle_block_success(run_id, block_id, output))
+
+
+# Periodic tasks, scheduled by the beat service (see celery_app.beat_schedule).
+# Both are safe to run concurrently from several processes.
+
+@celery_app.task(ignore_result=True)
+def sweep_wait_timeouts() -> int:
+    return asyncio.run(engine.sweep_wait_timeouts())
+
+
+@celery_app.task(ignore_result=True)
+def fire_due_schedules() -> list[str]:
+    return asyncio.run(engine.triggers.fire_due_schedules())

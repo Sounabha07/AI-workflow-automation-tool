@@ -7,10 +7,16 @@ import re
 from typing import Any
 
 import blocks  # noqa: F401 -- importing this registers every block
+from blocks import TRIGGER_TYPES, WAIT_TYPE
 from blocks.registry import list_registered_types
+from blocks.schedule_trigger import DEFAULT_TIMEZONE, schedule_problem
 from blocks.switch import FALLBACK, switch_outputs
+from blocks.wait_for_input import timeout_problem
+from engine.resolver import PLACEHOLDER, RESUME_NAMESPACE
 
 BLOCK_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+RESERVED_BLOCK_IDS = {RESUME_NAMESPACE}
+RESUME_FIELDS = ("token", "url")
 
 
 def edge_targets(block_def: dict) -> list[str]:
@@ -19,6 +25,45 @@ def edge_targets(block_def: dict) -> list[str]:
     if isinstance(nxt, dict):
         return [t for targets in nxt.values() if isinstance(targets, list) for t in targets]
     return list(nxt) if isinstance(nxt, list) else []
+
+
+def _strings(value: Any):
+    """Every string nested anywhere in a config value."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from _strings(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _strings(v)
+
+
+def _resume_ref_problems(block_defs: dict) -> list[str]:
+    """{{ resume.<id>.token|url }} must name an existing wait block. These
+    refs never create edges, so they play no part in the cycle check."""
+    wait_ids = {bid for bid, b in block_defs.items() if isinstance(b, dict) and b.get("type") == WAIT_TYPE}
+    problems: list[str] = []
+    for block_id, b in block_defs.items():
+        if not isinstance(b, dict):
+            continue
+        for text in _strings(b.get("config") or {}):
+            for m in PLACEHOLDER.finditer(text):
+                segments = m.group(1).strip().split(".")
+                if segments[0] != RESUME_NAMESPACE:
+                    continue
+                ref = "{{ " + m.group(1).strip() + " }}"
+                if len(segments) < 2 or segments[1] not in wait_ids:
+                    target = segments[1] if len(segments) > 1 else ""
+                    problems.append(
+                        f"Block '{block_id}': {ref} doesn't name a Wait for Input block"
+                        + (f" ('{target}' isn't one)." if target else ".")
+                    )
+                elif len(segments) != 3 or segments[2] not in RESUME_FIELDS:
+                    problems.append(
+                        f"Block '{block_id}': {ref} must end in .token or .url."
+                    )
+    return problems
 
 
 def validate_definition(definition: Any) -> list[str]:
@@ -38,6 +83,8 @@ def validate_definition(definition: Any) -> list[str]:
                 f"Block id '{block_id}' is invalid. Use lowercase letters, digits and "
                 f"underscores, starting with a letter (max 63 characters)."
             )
+        elif block_id in RESERVED_BLOCK_IDS:
+            problems.append(f"Block id '{block_id}' is reserved. Pick another name.")
         if not isinstance(b, dict):
             problems.append(f"Block '{block_id}' must be an object.")
             malformed.add(block_id)
@@ -92,8 +139,33 @@ def validate_definition(definition: Any) -> list[str]:
             problems.append(f"Block '{block_id}': 'next' must be a list.")
             malformed.add(block_id)
 
-        if block_type == "manual_trigger" and depends_on:
+        if block_type in TRIGGER_TYPES and depends_on:
             problems.append(f"Trigger '{block_id}' can't have incoming connections.")
+
+        config = b.get("config") or {}
+        if block_type == "schedule_trigger":
+            problem = schedule_problem(config.get("cron"), config.get("timezone") or DEFAULT_TIMEZONE)
+            if problem:
+                problems.append(f"Schedule '{block_id}': {problem}")
+        if block_type == WAIT_TYPE:
+            timeout = config.get("timeout_seconds")
+            # An expression is checked when it resolves, at run time.
+            if not (isinstance(timeout, str) and "{{" in timeout):
+                problem = timeout_problem(timeout)
+                if problem:
+                    problems.append(f"Wait '{block_id}': {problem}")
+
+    triggers = sorted(
+        bid for bid, b in block_defs.items() if isinstance(b, dict) and b.get("type") in TRIGGER_TYPES
+    )
+    if not triggers:
+        problems.append("The workflow needs a trigger block (manual, schedule or webhook).")
+    elif len(triggers) > 1:
+        problems.append(
+            f"A workflow can have only one trigger, but it has {len(triggers)}: {', '.join(triggers)}."
+        )
+
+    problems.extend(_resume_ref_problems(block_defs))
 
     if malformed:
         return problems

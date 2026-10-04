@@ -4,6 +4,7 @@ in a config dict with real values from upstream block outputs.
 """
 
 import json
+import os
 import re
 from typing import Any
 
@@ -14,14 +15,36 @@ PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}")
 # The lazy PLACEHOLDER.fullmatch would also match "{{ a }} x {{ b }}".
 WHOLE_PLACEHOLDER = re.compile(r"\s*\{\{([^{}]*)\}\}\s*")
 
+# {{ resume.<wait_block_id>.token }} / .url: a wait block's resume link,
+# available to every block in the run (it's minted at run creation), so an
+# upstream notifier can send it. Not a dependency edge. "resume" is a
+# reserved block id, enforced by app/validation.py.
+RESUME_NAMESPACE = "resume"
+
+
+def public_url(path: str) -> str:
+    """An absolute URL on this API, as seen from outside (PUBLIC_BASE_URL)."""
+    base = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
+    return f"{base}{path}"
+
+
+def resume_url(token: str) -> str:
+    return public_url(f"/resume/{token}")
+
 
 def _lookup(path: str, run_state: dict) -> Any:
     path = path.strip()
     segments = path.split(".")
     block_id, *field_path = segments
 
+    if block_id == RESUME_NAMESPACE and field_path and field_path[0] not in run_state.get(block_id, {}):
+        raise ValueError(
+            f"Reference '{{{{ {path} }}}}' — there is no wait block '{field_path[0]}' "
+            f"in this run. Resume links exist only in runs that include the wait block."
+        )
+
     if block_id not in run_state:
-        available = sorted(run_state.keys())
+        available = sorted(k for k in run_state if k != RESUME_NAMESPACE)
         raise ValueError(
             f"Reference '{{{{ {path} }}}}' — block '{block_id}' has no output "
             f"in this run yet. Blocks with output: {available}"
@@ -122,16 +145,17 @@ def resolve(value: Any, run_state: dict) -> Any:
 
 async def build_run_state(run_id: str) -> dict:
     """Starts from runs.seed_outputs (test-step runs only), then overlays
-    every finished block's output for this run from the DB."""
+    every finished block's output for this run from the DB, plus the
+    reserved `resume` namespace of this run's wait blocks."""
     conn = await get_connection()
     try:
         seed = await conn.fetchval("SELECT seed_outputs FROM runs WHERE id = $1", run_id)
         state = (json.loads(seed) if isinstance(seed, str) else seed) or {}
         rows = await conn.fetch(
             """
-            SELECT block_id, output
+            SELECT block_id, output, resume_token
             FROM block_executions
-            WHERE run_id = $1 AND output IS NOT NULL
+            WHERE run_id = $1 AND (output IS NOT NULL OR resume_token IS NOT NULL)
             """,
             run_id,
         )
@@ -142,7 +166,15 @@ async def build_run_state(run_id: str) -> dict:
                 else r["output"]
             )
             for r in rows
+            if r["output"] is not None
         })
+        resume = {
+            r["block_id"]: {"token": r["resume_token"], "url": resume_url(r["resume_token"])}
+            for r in rows
+            if r.get("resume_token")
+        }
+        if resume:
+            state[RESUME_NAMESPACE] = resume
         return state
     finally:
         await conn.close()
