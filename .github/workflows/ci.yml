@@ -88,6 +88,18 @@ jobs:
           echo "::error::Celery worker did not answer a ping within 60s"
           exit 1
 
+      # Beat drives wait timeouts and schedules; the smoke test relies on both.
+      - name: Check the Celery beat service is running
+        run: |
+          for i in $(seq 1 15); do
+            if [ -n "$(docker compose ps --status running -q beat)" ]; then
+              echo "Beat running after $((i * 2))s"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Celery beat is not running"
+          exit 1
+
       # Every HTTP block in the smoke test calls the API's own /health over
       # the compose network, so no third-party services or secrets are used.
       - name: Smoke test
