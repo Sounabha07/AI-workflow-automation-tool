@@ -75,6 +75,11 @@ def mask_sensitive(config: dict, schema: dict) -> dict:
     return {k: (MASK if k in sensitive and v not in (None, "") else v) for k, v in config.items()}
 
 
+class RunVanishedError(Exception):
+    """The run (or this block's row in it) no longer exists: its pipeline was
+    deleted mid-run, cascading to the run. Nothing is left to do."""
+
+
 class PipelineInactiveError(Exception):
     """An automatic trigger fired for a pipeline whose is_active is off."""
 
@@ -263,7 +268,7 @@ async def get_block_context(run_id: str, block_id: str) -> dict:
             block_id,
         )
         if row is None:
-            raise RuntimeError(
+            raise RunVanishedError(
                 f"No block_execution for run_id={run_id}, block_id={block_id}"
             )
 
@@ -477,6 +482,8 @@ async def handle_block_success(run_id: str, block_id: str, output: dict) -> None
                 run_id,
                 block_id,
             )
+            if retry_count is None:
+                return  # the run was deleted while this block executed
             await _after_success(
                 conn, run_id, block_id, output, retry_count, to_dispatch, pending_events
             )

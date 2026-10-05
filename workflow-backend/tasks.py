@@ -21,6 +21,10 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
 
     try:
         context = asyncio.run(engine.get_block_context(run_id, block_id))
+    except engine.RunVanishedError:
+        # Deleted between the check above and here: nothing left to run.
+        logger.info("Run %s was deleted; skipping block %s", run_id, block_id)
+        return
     except ValueError as e:
         # An unresolvable {{ }} reference won't fix itself on retry.
         asyncio.run(engine.handle_block_failure(run_id, block_id, str(e), False, attempts))
