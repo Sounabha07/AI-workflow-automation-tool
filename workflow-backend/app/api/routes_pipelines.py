@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 
 from db import get_connection
-from engine.triggers import list_triggers, set_pipeline_active, sync_triggers
+from engine.triggers import list_triggers, list_wait_links, set_pipeline_active, sync_triggers
 from app.errors import NotFoundError
 from app.validation import ensure_valid
 from app.api.models import (
@@ -67,6 +67,7 @@ async def _pipeline_response(conn, row) -> PipelineResponse:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         triggers=[PipelineTrigger(**t) for t in triggers],
+        resume_links=await list_wait_links(conn, row["id"]),
     )
 
 

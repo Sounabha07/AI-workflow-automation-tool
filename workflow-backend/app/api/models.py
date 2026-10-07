@@ -38,6 +38,8 @@ class PipelineResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     triggers: list[PipelineTrigger] = []
+    # Each Wait for Input block's fixed resume link: [{block_id, url}].
+    resume_links: list[dict] = []
 
 
 class PipelineListItem(BaseModel):

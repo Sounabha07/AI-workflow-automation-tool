@@ -106,20 +106,41 @@ export function WebhookPanel({ blockId }: { blockId: string }) {
   );
 }
 
-/** How to hand a wait block's resume link to an earlier block. */
+/** The wait block's fixed resume URL (minted on the first save, like a
+ * webhook URL), plus the per-run link expression for sending it onward. */
 export function WaitPanel({ blockId }: { blockId: string }) {
+  const pipelineId = useEditorStore((s) => s.pipelineId);
+  const { data: pipeline } = useQuery({
+    queryKey: ["pipeline", pipelineId],
+    queryFn: () => getPipeline(pipelineId!),
+    enabled: !!pipelineId,
+  });
+  const url = pipeline?.resume_links?.find((l) => l.block_id === blockId)?.url;
+
   return (
-    <div className="mb-4 rounded-lg border border-line bg-panel p-3 text-xs text-ink-2">
-      <div className="mb-1.5 font-medium">Resume link</div>
-      <p className="m-0 mb-2 text-ink-3">
-        Each run gets its own link. Any block can include it, for example to send it in a message before this block
-        starts waiting. It doesn't connect the blocks.
-      </p>
-      <CopyField value={`{{ resume.${blockId}.url }}`} label="resume link expression" />
-      <p className="mb-0 mt-2 text-ink-3">
-        POST a JSON object to it to continue. Later blocks read it as{" "}
-        <code className="font-mono">{`{{ ${blockId}.data }}`}</code>. If nobody does before the timeout, the run fails.
-      </p>
-    </div>
+    <>
+      <div className="mb-4 rounded-lg border border-line bg-panel p-3 text-xs text-ink-2">
+        <div className="mb-1.5 font-medium">Resume URL</div>
+        {url ? (
+          <CopyField value={url} label="resume URL" />
+        ) : (
+          <p className="m-0 text-ink-3">The URL appears after you save the workflow with this block.</p>
+        )}
+        <p className="mb-0 mt-2 text-ink-3">
+          POST a JSON object to it to continue a run that is waiting here. If several runs are waiting, each call
+          continues the one that has waited longest. Later blocks read what you sent as{" "}
+          <code className="font-mono">{`{{ ${blockId}.data }}`}</code>. If nobody resumes a run before the timeout, that
+          run fails.
+        </p>
+      </div>
+      <div className="mb-4 rounded-lg border border-line bg-panel p-3 text-xs text-ink-2">
+        <div className="mb-1.5 font-medium">Link for one specific run</div>
+        <p className="m-0 mb-2 text-ink-3">
+          Each run also gets its own link that continues only that run. Any block can include it, for example to send
+          it in a message before this block starts waiting. It doesn't connect the blocks.
+        </p>
+        <CopyField value={`{{ resume.${blockId}.url }}`} label="per-run link expression" />
+      </div>
+    </>
   );
 }

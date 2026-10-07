@@ -281,6 +281,7 @@ def main():
 
     validation_checks()
     wait_checks(linear_id)
+    wait_fixed_link_checks()
     wait_timeout_checks()
     webhook_checks()
     schedule_fire_checks(sched_id, sched_started)
@@ -385,6 +386,37 @@ def wait_checks(plain_pipeline_id):
           ((after.get("output") or {}).get("data") or {}).get("status") == "ok", f"{after}")
     check("downstream ran once, without retries", after.get("status") == "succeeded" and after.get("retry_count") == 0)
     check("an unknown resume token is 404", api("POST", "/resume/not-a-real-token", {})[0] == 404)
+
+
+def wait_fixed_link_checks():
+    section("12b. Wait for input: the block's fixed resume URL")
+    d = {"blocks": {
+        "trigger": blk("manual_trigger", {}, [], ["wait"], 0),
+        "wait": blk("wait_for_input", wait_cfg(300), ["trigger"], [], 200)}}
+    pid = new_pipe("wait_link", d)
+    links = (api("GET", f"/pipelines/{pid}")[1] or {}).get("resume_links", [])
+    url = links[0]["url"] if links else None
+    check("a saved wait block has a fixed resume URL", bool(url) and "/resume/" in url, f"{links}")
+    path = "/resume/" + token_of(url)
+    check("with nothing waiting it returns 409", api("POST", path, {})[0] == 409)
+    api("PUT", f"/pipelines/{pid}", {"definition": d})
+    again = (api("GET", f"/pipelines/{pid}")[1] or {}).get("resume_links", [])
+    check("the fixed URL is stable across saves", bool(again) and again[0]["url"] == url)
+    first, second = start_run(pid), None
+    wait_block(first, "wait", ("waiting",))
+    second = start_run(pid)
+    wait_block(second, "wait", ("waiting",))
+    s1, d1, _ = api("POST", path, {"n": 1})
+    s2, d2, _ = api("POST", path, {"n": 2})
+    check("the fixed URL resumes the longest-waiting run first",
+          s1 == 200 and s2 == 200 and (d1 or {}).get("run_id") == first and (d2 or {}).get("run_id") == second,
+          f"{s1} {d1} {s2} {d2}")
+    check("each run got its own JSON",
+          (block_of(first, "wait").get("output") or {}).get("data") == {"n": 1}
+          and (block_of(second, "wait").get("output") or {}).get("data") == {"n": 2})
+    check("with both resumed it returns 409 again", api("POST", path, {})[0] == 409)
+    api("DELETE", f"/pipelines/{pid}")
+    check("after deleting the workflow it returns 404", api("POST", path, {})[0] == 404)
 
 
 def wait_timeout_checks():

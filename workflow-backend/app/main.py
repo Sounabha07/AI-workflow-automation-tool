@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 import asyncpg
 
 from db import apply_schema, close_db, get_connection
+from engine.triggers import backfill_wait_links
 from app.api.routes_pipelines import router as pipelines_router
 from app.api.routes_runs import router as runs_router
 from app.api.routes_resume import router as resume_router
@@ -19,6 +20,7 @@ from app.validation import InvalidWorkflowError
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await apply_schema()
+    await backfill_wait_links()
     yield
     await close_db()
 

@@ -138,3 +138,28 @@ async def test_sweep_fails_each_expired_wait_with_the_timeout_message(monkeypatc
         ("r1", "w1", "Timed out waiting for input after 5 seconds", False, "waiting"),
         ("r2", "w2", "Timed out waiting for input after 60 seconds", False, "waiting"),
     ]
+
+
+async def test_block_link_resumes_oldest_and_skips_a_lost_race(wire, monkeypatch):
+    wire(ScriptedConn({
+        "FROM pipeline_wait_links": {"pipeline_id": "p1", "block_id": "wait"},
+        "ORDER BY be.started_at": [{"resume_token": "oldest"}, {"resume_token": "next"}],
+    }))
+    tried = []
+
+    async def fake_resume(token, data):
+        tried.append(token)
+        if token == "oldest":  # a concurrent call got it first
+            return engine.ResumeResult("already_resumed", "r0", "wait", "succeeded")
+        return engine.ResumeResult("resumed", "r1", "wait", "succeeded")
+
+    monkeypatch.setattr(engine, "resume_waiting_block", fake_resume)
+    result = await engine.resume_by_block_link("link", {"ok": True})
+    assert tried == ["oldest", "next"] and result.run_id == "r1"
+
+
+async def test_block_link_with_nothing_waiting_or_unknown_token(wire):
+    wire(ScriptedConn({"FROM pipeline_wait_links": {"pipeline_id": "p1", "block_id": "wait"}}))
+    assert (await engine.resume_by_block_link("link", {})).outcome == "nothing_waiting"
+    wire(ScriptedConn())
+    assert await engine.resume_by_block_link("nope", {}) is None

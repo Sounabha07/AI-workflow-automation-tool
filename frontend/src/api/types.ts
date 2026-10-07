@@ -124,6 +124,8 @@ export interface PipelineResponse {
   created_at: string;
   updated_at: string;
   triggers: PipelineTrigger[];
+  /** Each Wait for Input block's fixed resume link (resumes its longest-waiting run). */
+  resume_links: { block_id: string; url: string }[];
 }
 
 export interface BlockError {

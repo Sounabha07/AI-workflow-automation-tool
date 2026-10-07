@@ -569,6 +569,41 @@ async def resume_waiting_block(token: str, data: dict) -> ResumeResult:
     return ResumeResult("resumed", run_id, row["block_id"], "succeeded")
 
 
+async def resume_by_block_link(link_token: str, data: dict) -> ResumeResult | None:
+    """POST to a wait block's fixed link (pipeline_wait_links): resumes the
+    run that has waited longest at that block. None if link_token isn't a
+    block link. Candidates are read unlocked, then claimed through
+    resume_waiting_block (which keeps the run-row-first lock order); a
+    candidate lost to a concurrent resume or timeout moves on to the next."""
+    conn = await get_connection()
+    try:
+        link = await conn.fetchrow(
+            "SELECT pipeline_id, block_id FROM pipeline_wait_links WHERE token = $1", link_token
+        )
+        if link is None:
+            return None
+        candidates = await conn.fetch(
+            """
+            SELECT be.resume_token
+            FROM block_executions be JOIN runs r ON r.id = be.run_id
+            WHERE r.pipeline_id = $1 AND be.block_id = $2
+              AND be.status = 'waiting' AND be.wait_deadline > NOW()
+            ORDER BY be.started_at, be.id
+            LIMIT 20
+            """,
+            link["pipeline_id"],
+            link["block_id"],
+        )
+    finally:
+        await conn.close()
+
+    for c in candidates:
+        result = await resume_waiting_block(c["resume_token"], data)
+        if result.outcome == "resumed":
+            return result
+    return ResumeResult("nothing_waiting", block_id=link["block_id"])
+
+
 async def handle_block_failure(
     run_id: str,
     block_id: str,

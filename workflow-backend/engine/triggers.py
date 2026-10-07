@@ -1,16 +1,19 @@
 """
 pipeline_triggers: a derived index of each pipeline's schedule and webhook
-trigger blocks. The definition stays the source of truth; sync_triggers()
-rewrites the index on pipeline create and update, on_activated() on
+trigger blocks (and pipeline_wait_links, one fixed resume link per wait
+block). The definition stays the source of truth; sync_triggers()
+rewrites both on pipeline create and update, on_activated() runs on
 activation, and pipeline delete cascades.
 
 fire_due_schedules() is the beat task body that starts scheduled runs.
 """
 
+import json
 import logging
 import secrets
 from datetime import datetime, timezone
 
+from blocks import WAIT_TYPE
 from blocks.schedule_trigger import DEFAULT_TIMEZONE, next_occurrence
 from db import get_connection
 
@@ -36,6 +39,7 @@ async def sync_triggers(conn, pipeline_id, definition: dict) -> None:
         pipeline_id,
         list(wanted),
     )
+    await _sync_wait_links(conn, pipeline_id, definition)
     for block_id, b in wanted.items():
         config = b.get("config") or {}
         if b["type"] == "webhook_trigger":
@@ -70,6 +74,53 @@ async def sync_triggers(conn, pipeline_id, definition: dict) -> None:
                 tz,
                 next_occurrence(cron, tz, _now()),
             )
+
+
+async def _sync_wait_links(conn, pipeline_id, definition: dict) -> None:
+    """One fixed resume link per wait_for_input block, kept across saves."""
+    wait_ids = [
+        bid for bid, b in (definition.get("blocks") or {}).items()
+        if isinstance(b, dict) and b.get("type") == WAIT_TYPE
+    ]
+    await conn.execute(
+        "DELETE FROM pipeline_wait_links WHERE pipeline_id = $1 AND NOT (block_id = ANY($2::text[]))",
+        pipeline_id,
+        wait_ids,
+    )
+    for block_id in wait_ids:
+        await conn.execute(
+            "INSERT INTO pipeline_wait_links (pipeline_id, block_id, token) VALUES ($1, $2, $3) "
+            "ON CONFLICT (pipeline_id, block_id) DO NOTHING",
+            pipeline_id,
+            block_id,
+            secrets.token_urlsafe(24),
+        )
+
+
+async def backfill_wait_links() -> None:
+    """Gives wait blocks saved before fixed links existed their link. Idempotent."""
+    conn = await get_connection()
+    try:
+        rows = await conn.fetch(
+            "SELECT id, definition FROM pipelines WHERE definition::text LIKE '%wait_for_input%'"
+        )
+        for r in rows:
+            definition = r["definition"]
+            async with conn.transaction():
+                await _sync_wait_links(conn, r["id"], json.loads(definition) if isinstance(definition, str) else definition)
+    finally:
+        await conn.close()
+
+
+async def list_wait_links(conn, pipeline_id) -> list[dict]:
+    """[{block_id, url}] for API responses."""
+    from engine.resolver import resume_url
+
+    rows = await conn.fetch(
+        "SELECT block_id, token FROM pipeline_wait_links WHERE pipeline_id = $1 ORDER BY block_id",
+        pipeline_id,
+    )
+    return [{"block_id": r["block_id"], "url": resume_url(r["token"])} for r in rows]
 
 
 async def on_activated(conn, pipeline_id) -> None:

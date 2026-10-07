@@ -178,3 +178,15 @@ ALTER TABLE block_executions ADD COLUMN IF NOT EXISTS wait_deadline TIMESTAMPTZ 
 CREATE INDEX IF NOT EXISTS idx_block_executions_wait_deadline
     ON block_executions (wait_deadline)
     WHERE status = 'waiting';
+
+-- One fixed resume link per Wait for Input block, shown after the workflow
+-- is saved (like a webhook URL). POSTing to it resumes the run that has
+-- waited longest at that block. Synced with the definition by
+-- engine/triggers.py; the token survives saves; pipeline delete cascades.
+CREATE TABLE IF NOT EXISTS pipeline_wait_links (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pipeline_id     UUID NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    block_id        TEXT NOT NULL,
+    token           TEXT NOT NULL UNIQUE,
+    UNIQUE (pipeline_id, block_id)
+);

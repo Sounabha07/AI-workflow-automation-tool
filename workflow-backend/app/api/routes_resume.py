@@ -14,6 +14,7 @@ _REFUSALS = {
     "not_waiting": (409, "This block isn't waiting for input yet."),
     "already_resumed": (409, "This block was already resumed."),
     "gone": (410, "This block is no longer waiting: it timed out, or its run failed or was cancelled."),
+    "nothing_waiting": (409, "No run is waiting at this block right now."),
 }
 
 
@@ -33,7 +34,11 @@ async def resume_block(token: str, request: Request) -> ResumeResponse:
     else:
         data = {}
 
+    # A run's own link resumes that run; a block's fixed link (shown after
+    # save) resumes the run that has waited longest at that block.
     result = await engine.resume_waiting_block(token, data)
+    if result.outcome == "not_found":
+        result = await engine.resume_by_block_link(token, data) or result
     if result.outcome != "resumed":
         code, message = _REFUSALS[result.outcome]
         raise HTTPException(status_code=code, detail=message)
