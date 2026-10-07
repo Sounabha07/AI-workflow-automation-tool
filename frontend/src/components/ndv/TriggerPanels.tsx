@@ -5,6 +5,7 @@ import { ApiError } from "@/api/client";
 import { CopyField } from "@/components/CopyField";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useEditorStore } from "@/store/editor";
+import { CronTableField } from "./fields/CronTableField";
 
 const FALLBACK_TIMEZONES = ["UTC", "Europe/London", "Europe/Berlin", "America/New_York", "America/Los_Angeles", "Asia/Kolkata", "Asia/Tokyo", "Australia/Sydney"];
 
@@ -17,15 +18,18 @@ function allTimezones(): string[] {
   }
 }
 
-/** Timezone select for the schedule trigger, plus the next 5 fire times
- * computed by the backend (/schedule/preview), so cron semantics live in one place. */
+/** The schedule trigger's settings: the cron expression as a per-field
+ * table, a timezone select, and the next 5 fire times computed by the
+ * backend (/schedule/preview), so cron semantics live in one place. */
 export function SchedulePanel({
   cron,
   timezone,
+  onCronChange,
   onTimezoneChange,
 }: {
   cron: string;
   timezone: string;
+  onCronChange: (cron: string) => void;
   onTimezoneChange: (tz: string) => void;
 }) {
   const zones = useMemo(() => allTimezones(), []);
@@ -39,6 +43,7 @@ export function SchedulePanel({
 
   return (
     <>
+      <CronTableField value={cron} onChange={onCronChange} />
       <div className="mb-4">
         <label className="mb-1.5 block text-xs font-medium text-ink-2" htmlFor="schedule-tz">
           Timezone

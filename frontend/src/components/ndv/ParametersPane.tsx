@@ -95,8 +95,11 @@ export function ParametersPane({
   }
 
   const blockType = node.data.blockType;
-  // The schedule's timezone gets a proper select, rendered by SchedulePanel.
-  const fields = (schema?.fields ?? []).filter((f) => !(blockType === "schedule_trigger" && f.name === "timezone"));
+  // The schedule's cron (a per-field table) and timezone (a select) are
+  // rendered by SchedulePanel instead of the generic fields.
+  const fields = (schema?.fields ?? []).filter(
+    (f) => !(blockType === "schedule_trigger" && (f.name === "cron" || f.name === "timezone"))
+  );
 
   return (
     <>
@@ -122,8 +125,10 @@ export function ParametersPane({
           ))}
           {blockType === "schedule_trigger" && (
             <SchedulePanel
+              key={node.id}
               cron={String(effectiveConfig.cron ?? "")}
               timezone={String(effectiveConfig.timezone || "UTC")}
+              onCronChange={(cron) => handleFieldChange("cron", cron)}
               onTimezoneChange={(tz) => handleFieldChange("timezone", tz)}
             />
           )}
