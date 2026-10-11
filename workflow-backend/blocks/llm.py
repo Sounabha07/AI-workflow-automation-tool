@@ -115,12 +115,12 @@ LLM_BLOCK_SCHEMA = {
             "description": "Per attempt.",
         },
         {
-            "name": "api_key",
-            "label": "API key",
-            "type": "string",
-            "sensitive": True,
-            "placeholder": f"Leave blank to use {_DEFAULT_ENV_VAR}",
-            "description": f"Optional. If blank, the worker's {_DEFAULT_ENV_VAR} environment variable is used.",
+            "name": "credential",
+            "label": "Credential",
+            "type": "credential",
+            "credential_types": [p.credential_type for p in PROVIDERS.values()],
+            "placeholder": f"None: use the server's {_DEFAULT_ENV_VAR}",
+            "description": "Your own saved API key. With none selected, the server's key is used if one is set.",
         },
     ],
 }
@@ -203,11 +203,21 @@ class LLMBlock(BaseBlock):
         if json_schema is not None and not isinstance(json_schema, dict):
             raise FatalError("LLM block: 'json_schema' must be a JSON object.")
 
-        api_key = str(config.get("api_key") or "").strip() or os.environ.get(provider.env_var, "").strip()
+        # A saved credential (decrypted by the engine, never in config) wins;
+        # the server's environment variable is the operator fallback.
+        if credentials:
+            if credentials.get("type") != provider.credential_type:
+                raise FatalError(
+                    f"LLM block: credential '{credentials.get('name')}' is a {credentials.get('type')}, "
+                    f"but provider '{provider_name}' needs a {provider.credential_type}."
+                )
+            api_key = str(credentials.get("api_key") or "").strip()
+        else:
+            api_key = os.environ.get(provider.env_var, "").strip()
         if not api_key:
             raise FatalError(
-                f"LLM block: no API key. Set {provider.env_var} for the worker "
-                f"(workflow-backend/.env) or fill in the block's API key field."
+                f"LLM block: no API key. Select a saved credential in the block, "
+                f"or set {provider.env_var} for the worker (workflow-backend/.env)."
             )
 
         request = LLMRequest(

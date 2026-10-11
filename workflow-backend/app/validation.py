@@ -5,6 +5,7 @@ Returns human readable problems; an empty list means the definition is valid.
 
 import re
 from typing import Any
+from uuid import UUID
 
 import blocks  # noqa: F401 -- importing this registers every block
 from app.llm import DEFAULT_PROVIDER, PROVIDERS
@@ -195,6 +196,18 @@ def llm_config_problems(block_id: str, config: Any) -> list[str]:
         problems.append(
             f"LLM '{block_id}': unknown provider '{provider}'. Use one of: {', '.join(PROVIDERS)}."
         )
+
+    if "api_key" in config:
+        problems.append(
+            f"LLM '{block_id}': API keys can't be stored in a workflow. "
+            f"Save the key as a credential and select it instead."
+        )
+    credential = config.get("credential")
+    if credential not in (None, ""):
+        try:
+            UUID(str(credential))
+        except ValueError:
+            problems.append(f"LLM '{block_id}': 'credential' must be a saved credential's id.")
 
     prompt = config.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():

@@ -245,7 +245,43 @@ def main():
     lo = api("GET", f"/pipelines/{branch_id}/latest-outputs")[1] or {}
     check("latest-outputs includes the tested block", "big_call" in lo)
 
-    section("10. Deleting a workflow deletes its run history")
+    section("10. Saved credentials (no LLM is ever called)")
+    secret = f"AIza-smoke-{uuid.uuid4().hex}"
+    cred_name = f"{PREFIX}_cred"
+    status, cred, err = api("POST", "/credentials",
+                            {"name": cred_name, "type": "gemini_api_key", "data": {"api_key": secret}})
+    check("POST /credentials returns 201", status == 201, f"status {status} {err}")
+    check("the response never contains the secret", secret not in json.dumps(cred))
+    check("the response shows a hint of the last 4 characters", (cred or {}).get("hint") == "…" + secret[-4:])
+    listed = api("GET", "/credentials")[1] or []
+    check("GET /credentials lists it without the secret",
+          any(c["id"] == (cred or {}).get("id") for c in listed) and secret not in json.dumps(listed))
+    status, _, _ = api("POST", "/credentials", {"name": cred_name, "type": "gemini_api_key", "data": {"api_key": "x" * 20}})
+    check("a duplicate name is rejected with 409", status == 409, f"status {status}")
+    status, _, _ = api("POST", "/credentials", {"name": f"{cred_name}_bad", "type": "nope", "data": {"api_key": "x"}})
+    check("an unknown credential type is rejected with 400", status == 400, f"status {status}")
+    with_key = {"blocks": {"t": blk("manual_trigger", {}, [], ["l"], 0),
+                           "l": blk("llm", {"prompt": "hi", "api_key": "AIza-plain"}, ["t"], [], 200)}}
+    status, _, _ = api("POST", "/pipelines", {"name": f"{PREFIX}_llm_plainkey", "definition": with_key})
+    check("a plain API key in a workflow is rejected with 400", status == 400, f"status {status}")
+    if cred:
+        uses = {"blocks": {"t": blk("manual_trigger", {}, [], ["l"], 0),
+                           "l": blk("llm", {"prompt": "hi", "credential": cred["id"]}, ["t"], [], 200)}}
+        uses_id = new_pipe("llm_cred", uses)
+        status, _, err = api("DELETE", f"/credentials/{cred['id']}")
+        check("deleting a credential in use is rejected with 409", status == 409 and "llm_cred" in err, f"status {status}")
+        api("DELETE", f"/pipelines/{uses_id}")
+        check("an unused credential can be deleted", api("DELETE", f"/credentials/{cred['id']}")[0] == 204)
+    # A credential id that doesn't exist fails at run time, once, before any network call.
+    gone = {"blocks": {"t": blk("manual_trigger", {}, [], ["l"], 0),
+                       "l": blk("llm", {"prompt": "hi", "credential": str(uuid.uuid4())}, ["t"], [], 200)}}
+    run = wait_run(start_run(new_pipe("llm_gone", gone)))
+    err_l = (run and block_of(run["id"], "l").get("error")) or {}
+    check("a missing credential fails once, not retryable",
+          status_of(run) == "failed" and err_l.get("attempts") == 1 and err_l.get("retryable") is False
+          and "no longer exists" in err_l.get("message", ""), json.dumps(err_l))
+
+    section("11. Deleting a workflow deletes its run history")
     check("DELETE of a workflow with runs returns 204", api("DELETE", f"/pipelines/{branch_id}")[0] == 204)
     check("the pipeline is gone", api("GET", f"/pipelines/{branch_id}")[0] == 404)
     if branch_run_id:

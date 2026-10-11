@@ -9,7 +9,6 @@ from app.llm.gemini import GeminiProvider
 from app.validation import validate_definition
 from blocks.base import FatalError, RetryableError
 from blocks.llm import LLMBlock
-from engine import MASK, mask_sensitive
 from tests.conftest import block
 
 KEY = "AIza-test-key-0123456789"
@@ -52,8 +51,11 @@ def make(*responses):
     return LLMBlock(providers={"gemini": GeminiProvider(transport=t, base_url="https://fake.test/v1beta")}), t
 
 
+CREDS = {"api_key": KEY, "type": "gemini_api_key", "name": "Client key"}
+
+
 def cfg(**over):
-    return {"provider": "gemini", "model": "gemini-3.8-flash", "prompt": "Say hi", "api_key": KEY, **over}
+    return {"provider": "gemini", "model": "gemini-3.8-flash", "prompt": "Say hi", **over}
 
 
 @pytest.fixture(autouse=True)
@@ -65,7 +67,7 @@ def no_env_key(monkeypatch):
 
 async def test_request_body_headers_and_url():
     blk, t = make(ok())
-    await blk.execute(cfg(system_prompt="Be brief.", temperature=0.2, max_output_tokens=50, timeout_seconds=9), {})
+    await blk.execute(cfg(system_prompt="Be brief.", temperature=0.2, max_output_tokens=50, timeout_seconds=9), {}, CREDS)
     call = t.calls[0]
     assert call["url"] == "https://fake.test/v1beta/models/gemini-3.8-flash:generateContent"
     assert KEY not in call["url"]
@@ -81,7 +83,7 @@ async def test_request_body_headers_and_url():
 async def test_json_mode_sends_mime_type_and_schema():
     schema = {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}
     blk, t = make(ok(text='{"city": "Kolkata"}'))
-    await blk.execute(cfg(response_format="json", json_schema=schema), {})
+    await blk.execute(cfg(response_format="json", json_schema=schema), {}, CREDS)
     gen = t.calls[0]["body"]["generationConfig"]
     assert gen["responseMimeType"] == "application/json"
     assert gen["responseSchema"] == schema
@@ -90,15 +92,29 @@ async def test_json_mode_sends_mime_type_and_schema():
 
 async def test_text_mode_ignores_leftover_schema_and_omits_unset_options():
     blk, t = make(ok())
-    await blk.execute(cfg(temperature=None, json_schema={"type": "object"}), {})
+    await blk.execute(cfg(temperature=None, json_schema={"type": "object"}), {}, CREDS)
     assert "generationConfig" not in t.calls[0]["body"]
 
 
-async def test_env_key_used_when_config_blank(monkeypatch):
+async def test_env_key_used_when_no_credential(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "env-key-xyz")
     blk, t = make(ok())
-    await blk.execute(cfg(api_key=""), {})
+    await blk.execute(cfg(), {}, None)
     assert t.calls[0]["headers"]["x-goog-api-key"] == "env-key-xyz"
+
+
+async def test_saved_credential_wins_over_env(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "env-key-xyz")
+    blk, t = make(ok())
+    await blk.execute(cfg(), {}, CREDS)
+    assert t.calls[0]["headers"]["x-goog-api-key"] == KEY
+
+
+async def test_credential_of_another_type_is_fatal():
+    blk, t = make()
+    with pytest.raises(FatalError, match="needs a gemini_api_key"):
+        await blk.execute(cfg(), {}, {**CREDS, "type": "openai_api_key"})
+    assert t.calls == []
 
 
 # ── response parsing ────────────────────────────────────────────────── #
@@ -107,7 +123,7 @@ async def test_text_response_and_usage_mapping():
     blk, _ = make(ok(text="Hi there", usage={
         "promptTokenCount": 11, "candidatesTokenCount": 4, "thoughtsTokenCount": 20, "totalTokenCount": 35,
     }))
-    out = await blk.execute(cfg(), {})
+    out = await blk.execute(cfg(), {}, CREDS)
     assert out == {
         "text": "Hi there",
         "json": None,
@@ -123,7 +139,7 @@ async def test_thought_parts_are_not_part_of_the_text():
                         "finishReason": "STOP"}],
     }
     blk, _ = make(TransportResponse(200, {}, json.dumps(resp).encode()))
-    out = await blk.execute(cfg(), {})
+    out = await blk.execute(cfg(), {}, CREDS)
     assert out["text"] == "Answer"
     assert out["usage"] == {"input_tokens": None, "output_tokens": None, "total_tokens": None}
     assert out["model"] == "gemini-3.8-flash"  # no modelVersion: falls back to the requested name
@@ -131,14 +147,14 @@ async def test_thought_parts_are_not_part_of_the_text():
 
 async def test_json_response_is_parsed():
     blk, _ = make(ok(text='{"city": "Kolkata", "n": 2}'))
-    out = await blk.execute(cfg(response_format="json"), {})
+    out = await blk.execute(cfg(response_format="json"), {}, CREDS)
     assert out["json"] == {"city": "Kolkata", "n": 2}
     assert out["text"] == '{"city": "Kolkata", "n": 2}'
 
 
 async def test_max_tokens_is_success_with_finish_reason():
     blk, _ = make(ok(text="Once upon a", finish="MAX_TOKENS"))
-    out = await blk.execute(cfg(max_output_tokens=3), {})
+    out = await blk.execute(cfg(max_output_tokens=3), {}, CREDS)
     assert out["finish_reason"] == "max_tokens"
     assert out["text"] == "Once upon a"
 
@@ -149,13 +165,13 @@ async def test_max_tokens_is_success_with_finish_reason():
 async def test_retryable_statuses(status):
     blk, _ = make(err(status))
     with pytest.raises(RetryableError, match=f"\\({status}\\)"):
-        await blk.execute(cfg(), {})
+        await blk.execute(cfg(), {}, CREDS)
 
 
 async def test_retry_after_header_is_honored():
     blk, _ = make(err(429, headers={"Retry-After": "17"}))
     with pytest.raises(RetryableError) as e:
-        await blk.execute(cfg(), {})
+        await blk.execute(cfg(), {}, CREDS)
     assert e.value.retry_after_seconds == 17
 
 
@@ -164,7 +180,7 @@ async def test_retry_delay_from_error_body():
         {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "23s"}]}}
     blk, _ = make(err(429, body))
     with pytest.raises(RetryableError) as e:
-        await blk.execute(cfg(), {})
+        await blk.execute(cfg(), {}, CREDS)
     assert e.value.retry_after_seconds == 23
 
 
@@ -172,19 +188,19 @@ async def test_retry_delay_from_error_body():
 async def test_timeouts_and_connection_errors_are_retryable(exc):
     blk, _ = make(exc)
     with pytest.raises(RetryableError):
-        await blk.execute(cfg(), {})
+        await blk.execute(cfg(), {}, CREDS)
 
 
 async def test_invalid_json_in_json_mode_is_retryable():
     blk, _ = make(ok(text="Sure! Here is the JSON: {"))
     with pytest.raises(RetryableError, match="isn't valid JSON"):
-        await blk.execute(cfg(response_format="json"), {})
+        await blk.execute(cfg(response_format="json"), {}, CREDS)
 
 
 async def test_truncated_json_at_max_tokens_is_fatal():
     blk, _ = make(ok(text='{"city": "Kol', finish="MAX_TOKENS"))
     with pytest.raises(FatalError, match="max_output_tokens"):
-        await blk.execute(cfg(response_format="json"), {})
+        await blk.execute(cfg(response_format="json"), {}, CREDS)
 
 
 @pytest.mark.parametrize("status,hint", [
@@ -193,7 +209,7 @@ async def test_truncated_json_at_max_tokens_is_fatal():
 async def test_fatal_statuses(status, hint):
     blk, _ = make(err(status))
     with pytest.raises(FatalError, match=hint):
-        await blk.execute(cfg(), {})
+        await blk.execute(cfg(), {}, CREDS)
 
 
 async def test_invalid_key_reported_as_rejected_key():
@@ -202,32 +218,32 @@ async def test_invalid_key_reported_as_rejected_key():
                       "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "API_KEY_INVALID"}]}}
     blk, _ = make(err(400, body))
     with pytest.raises(FatalError, match="API key was rejected"):
-        await blk.execute(cfg(), {})
+        await blk.execute(cfg(), {}, CREDS)
 
 
 async def test_prompt_blocked_is_fatal():
     resp = {"promptFeedback": {"blockReason": "SAFETY"}, "candidates": []}
     blk, _ = make(TransportResponse(200, {}, json.dumps(resp).encode()))
     with pytest.raises(FatalError, match="blockReason=SAFETY"):
-        await blk.execute(cfg(), {})
+        await blk.execute(cfg(), {}, CREDS)
 
 
 async def test_answer_stopped_for_safety_is_fatal():
     blk, _ = make(ok(text="", finish="SAFETY"))
     with pytest.raises(FatalError, match="finishReason=SAFETY"):
-        await blk.execute(cfg(), {})
+        await blk.execute(cfg(), {}, CREDS)
 
 
 async def test_empty_candidates_is_fatal():
     blk, _ = make(TransportResponse(200, {}, b'{"candidates": []}'))
     with pytest.raises(FatalError, match="no candidates"):
-        await blk.execute(cfg(), {})
+        await blk.execute(cfg(), {}, CREDS)
 
 
 async def test_missing_key_fails_fast_without_calling_out():
     blk, t = make()
-    with pytest.raises(FatalError, match="GEMINI_API_KEY"):
-        await blk.execute(cfg(api_key=""), {})
+    with pytest.raises(FatalError, match="Select a saved credential.*GEMINI_API_KEY"):
+        await blk.execute(cfg(), {}, None)
     assert t.calls == []
 
 
@@ -235,7 +251,7 @@ async def test_error_body_is_truncated_and_key_scrubbed():
     body = {"error": {"message": f"echo {KEY} " + "x" * 5000}}
     blk, _ = make(err(500, body))
     with pytest.raises(RetryableError) as e:
-        await blk.execute(cfg(), {})
+        await blk.execute(cfg(), {}, CREDS)
     msg = str(e.value)
     assert KEY not in msg
     assert "[redacted]" in msg and msg.endswith("… (truncated)")
@@ -247,13 +263,13 @@ async def test_key_never_in_any_error_message():
     for r in cases:
         blk, _ = make(r)
         with pytest.raises((FatalError, RetryableError)) as e:
-            await blk.execute(cfg(), {})
+            await blk.execute(cfg(), {}, CREDS)
         assert KEY not in str(e.value)
 
 
 async def test_unknown_provider_is_fatal():
     with pytest.raises(FatalError, match="unknown provider 'openai'"):
-        await LLMBlock().execute(cfg(provider="openai"), {})
+        await LLMBlock().execute(cfg(provider="openai"), {}, CREDS)
 
 
 @pytest.mark.parametrize("over,match", [
@@ -265,14 +281,15 @@ async def test_unknown_provider_is_fatal():
 async def test_block_rechecks_resolved_values(over, match):
     blk, t = make()
     with pytest.raises(FatalError, match=match):
-        await blk.execute(cfg(**over), {})
+        await blk.execute(cfg(**over), {}, CREDS)
     assert t.calls == []
 
 
-def test_api_key_masked_in_resolved_config():
-    masked = mask_sensitive(cfg(), LLMBlock.schema)
-    assert masked["api_key"] == MASK
-    assert KEY not in json.dumps(masked)
+def test_schema_has_a_credential_picker_and_no_key_field():
+    fields = {f["name"]: f for f in LLMBlock.schema["fields"]}
+    assert "api_key" not in fields
+    assert fields["credential"]["type"] == "credential"
+    assert fields["credential"]["credential_types"] == ["gemini_api_key"]
 
 
 # ── validation ─────────────────────────────────────────────────────── #
@@ -289,6 +306,7 @@ def test_valid_llm_config():
     assert validate_definition(_wf(temperature="{{ trigger.t }}", response_format="json",
                                    json_schema={"type": "object"})) == []
     assert validate_definition(_wf(json_schema={})) == []  # empty schema in text mode is fine
+    assert validate_definition(_wf(credential="7d0f4a1e-2b3c-4d5e-8f90-a1b2c3d4e5f6")) == []
 
 
 @pytest.mark.parametrize("config,fragment", [
@@ -303,6 +321,8 @@ def test_valid_llm_config():
     ({"response_format": "json", "json_schema": [1, 2]}, "must be a JSON object"),
     ({"response_format": "json", "json_schema": "not json"}, "must be a JSON object"),
     ({"provider": "openai"}, "unknown provider 'openai'"),
+    ({"api_key": "AIza..."}, "API keys can't be stored in a workflow"),
+    ({"credential": "not-a-uuid"}, "must be a saved credential's id"),
 ])
 def test_invalid_llm_config(config, fragment):
     problems = validate_definition(_wf(**config))
