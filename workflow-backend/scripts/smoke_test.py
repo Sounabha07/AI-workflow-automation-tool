@@ -106,8 +106,10 @@ def main():
     check("GET /health reports ok", (h or {}).get("status") == "ok", err)
     _, blocks, _ = api("GET", "/blocks")
     types = [b["type"] for b in blocks or []]
-    check("four block types registered", len(types) == 4, f"got: {types}")
+    check("five block types registered", len(types) == 5, f"got: {types}")
     check("switch block is registered", "switch" in types)
+    llm = next((b for b in blocks or [] if b["type"] == "llm"), None)
+    check("llm block is registered with category llm", bool(llm) and llm["schema"]["category"] == "llm")
     check("every block schema has a category", all(b["schema"].get("category") for b in blocks or []))
 
     section("2. Definition validation")
@@ -123,6 +125,15 @@ def main():
         "a": blk("http_request", http_cfg(HEALTH), ["t", "a"], ["a"], 200)}}
     status, _, _ = api("POST", "/pipelines", {"name": f"{PREFIX}_self", "definition": self_loop})
     check("a self-loop is rejected with 400", status == 400, f"status {status}")
+    # Validation only: nothing here reaches an LLM provider.
+    bad_llm = {"blocks": {
+        "t": blk("manual_trigger", {}, [], ["l"], 0),
+        "l": blk("llm", {"provider": "nope", "prompt": " ", "temperature": 5}, ["t"], [], 200)}}
+    status, data, _ = api("POST", "/pipelines", {"name": f"{PREFIX}_llm_bad", "definition": bad_llm})
+    problems = " ".join((data or {}).get("problems") or [])
+    check("a bad llm config is rejected with 400", status == 400, f"status {status}")
+    check("the 400 names the provider, prompt and temperature",
+          all(w in problems for w in ("unknown provider", "prompt", "temperature")), problems)
 
     section("3. Input block, resolver and HTTP block")
     fields = [{"name": "path", "label": "Path", "type": "text", "required": True, "description": ""}]
