@@ -41,6 +41,8 @@ class GeminiProvider:
     # A current fast, stable model (Gemini API docs, Oct 2026). Free text in the
     # block, so newer names work without a code change.
     default_model = "gemini-3.8-flash"
+    credential_type = "gemini_api_key"
+    credential_label = "Gemini API key"
 
     def __init__(self, transport: Transport | None = None, base_url: str | None = None):
         self.transport = transport or urllib_transport

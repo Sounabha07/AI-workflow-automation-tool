@@ -9,6 +9,7 @@ from app.api.routes_pipelines import router as pipelines_router
 from app.api.routes_runs import router as runs_router
 from app.api.routes_resume import router as resume_router
 from app.api.routes_blocks import router as blocks_router
+from app.api.routes_credentials import router as credentials_router
 from app.api.routes_ws import router as ws_router
 from app.errors import NotFoundError
 from app.validation import InvalidWorkflowError
@@ -35,6 +36,7 @@ app.include_router(pipelines_router, prefix="/pipelines",
 app.include_router(runs_router, prefix="/runs", tags=["runs"])
 app.include_router(resume_router, prefix="/resume", tags=["resume"])
 app.include_router(blocks_router, prefix="/blocks", tags=["blocks"])
+app.include_router(credentials_router, prefix="/credentials", tags=["credentials"])
 app.include_router(ws_router, tags=["ws"])
 
 

@@ -63,6 +63,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      # A throwaway key so the smoke test can save credentials. compose reads
+      # it from the job environment. No LLM key is set: CI never calls one.
+      - name: Generate a credentials encryption key
+        run: echo "CREDENTIALS_ENCRYPTION_KEY=$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')" >> "$GITHUB_ENV"
+
       - name: Start the stack
         run: docker compose up --build -d
 

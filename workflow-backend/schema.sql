@@ -76,6 +76,19 @@ CREATE TABLE IF NOT EXISTS block_executions (
     CONSTRAINT unique_run_block UNIQUE (run_id, block_id)
 );
 
+-- Saved secrets (e.g. a client's own LLM API key). secret_encrypted is a
+-- Fernet token (app/credentials.py); the plaintext is never stored or
+-- returned by the API. Blocks reference a credential by id.
+CREATE TABLE IF NOT EXISTS credentials (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name                VARCHAR(255) NOT NULL UNIQUE,
+    type                TEXT NOT NULL,
+    secret_encrypted    TEXT NOT NULL,
+    hint                TEXT NOT NULL DEFAULT '',
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs (status);
 CREATE INDEX IF NOT EXISTS idx_runs_pipeline_id ON runs (pipeline_id);
 CREATE INDEX IF NOT EXISTS idx_block_executions_run_id ON block_executions (run_id);

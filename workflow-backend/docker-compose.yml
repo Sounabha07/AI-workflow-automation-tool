@@ -29,8 +29,10 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://dag_user:dag_password@postgres:5432/dag_db
-      # LLM block fallback key, read from workflow-backend/.env. Interim until
-      # a credentials store exists. Empty is fine: llm blocks then fail fast.
+      # Decrypts saved credentials (clients' own API keys). Same value as the api.
+      - CREDENTIALS_ENCRYPTION_KEY=${CREDENTIALS_ENCRYPTION_KEY:-}
+      # Server-wide fallback for llm blocks with no credential selected, read
+      # from workflow-backend/.env. Empty is fine: those blocks then fail fast.
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_BASE_URL=${GEMINI_BASE_URL:-}
     volumes:
@@ -47,6 +49,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://dag_user:dag_password@postgres:5432/dag_db
       - REDIS_URL=redis://redis:6379/0
+      # Encrypts credentials saved through /credentials.
+      - CREDENTIALS_ENCRYPTION_KEY=${CREDENTIALS_ENCRYPTION_KEY:-}
     ports:
       - "8000:8000"
     volumes:

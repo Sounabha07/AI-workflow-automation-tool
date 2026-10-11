@@ -159,7 +159,9 @@ async def is_run_failed(run_id: str) -> bool:
 
 
 async def get_block_context(run_id: str, block_id: str) -> dict:
-    """Raises ValueError when a {{ }} reference can't be resolved."""
+    """Raises ValueError when a {{ }} reference can't be resolved or the
+    block's saved credential can't be used."""
+    from app.credentials import CredentialError, credential_fields, load_block_credentials
     from blocks.registry import get_block_class
     from engine.resolver import build_run_state, resolve, structure_json_fields
 
@@ -199,9 +201,23 @@ async def get_block_context(run_id: str, block_id: str) -> dict:
     if row["block_type"] == "input_block":
         resolved_config = {**resolved_config, "values": _load_json(row["input_data"]) or {}}
 
+    # Saved credentials are decrypted here and travel separately from config,
+    # so the secret never reaches resolved_config. The id comes from the raw
+    # config: credential fields aren't templates.
+    credentials = None
+    if credential_fields(schema):
+        conn = await get_connection()
+        try:
+            credentials = await load_block_credentials(conn, raw_config, schema)
+        except CredentialError as e:
+            raise ValueError(f"Credential error: {e}") from None
+        finally:
+            await conn.close()
+
     return {
         "block_type": row["block_type"],
         "config": resolved_config,
+        "credentials": credentials,
     }
 
 

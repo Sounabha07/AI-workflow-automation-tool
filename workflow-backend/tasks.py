@@ -21,7 +21,8 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
     try:
         context = asyncio.run(engine.get_block_context(run_id, block_id))
     except ValueError as e:
-        # An unresolvable {{ }} reference won't fix itself on retry.
+        # An unresolvable {{ }} reference or unusable credential won't fix
+        # itself on retry.
         asyncio.run(engine.handle_block_failure(run_id, block_id, str(e), False, attempts))
         return
 
@@ -42,7 +43,7 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
     config["block_id"] = block_id
 
     try:
-        output = asyncio.run(block.execute(config, input_data={}))
+        output = asyncio.run(block.execute(config, input_data={}, credentials=context["credentials"]))
     except RetryableError as e:
         if self.request.retries >= block_cls.max_retries:
             asyncio.run(engine.handle_block_failure(run_id, block_id, str(e), True, attempts))
