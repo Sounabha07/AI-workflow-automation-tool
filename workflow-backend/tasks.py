@@ -52,6 +52,8 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
             base=block_cls.retry_backoff_base_seconds,
             cap=block_cls.retry_backoff_cap_seconds,
         )
+        if e.retry_after_seconds is not None:
+            delay = max(delay, min(e.retry_after_seconds, block_cls.retry_backoff_cap_seconds))
         asyncio.run(engine.record_retry(run_id, block_id, self.request.retries + 1))
         raise self.retry(exc=e, countdown=delay, max_retries=block_cls.max_retries)
     except FatalError as e:
