@@ -29,6 +29,10 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://dag_user:dag_password@postgres:5432/dag_db
+      # LLM block fallback key, read from workflow-backend/.env. Interim until
+      # a credentials store exists. Empty is fine: llm blocks then fail fast.
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_BASE_URL=${GEMINI_BASE_URL:-}
     volumes:
       - .:/app
     depends_on:
