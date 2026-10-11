@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { blockVisual, COLOR_BG_CLASS } from "@/lib/blockVisuals";
+import { blockVisual, COLOR_BG_CLASS, type BlockVisual } from "@/lib/blockVisuals";
 import { switchOutputs } from "@/lib/nodeSubtitle";
 import { FieldRenderer } from "./fields/FieldRenderer";
 import { useEditorStore } from "@/store/editor";
@@ -49,7 +49,14 @@ export function ParametersPane({
 
   const handleFieldChange = (name: string, value: unknown) => {
     const before = node.data.blockType === "switch" ? switchOutputs(node.data.config) : [];
-    updateNodeConfig(node.id, (c) => ({ ...c, [name]: value }));
+    // A JSON schema only applies in JSON mode, and the field is hidden in
+    // text mode, so drop it rather than leave an invisible value behind.
+    const clearSchema = node.data.blockType === "llm" && name === "response_format" && value !== "json";
+    updateNodeConfig(node.id, (c) => {
+      const next = { ...c, [name]: value };
+      if (clearSchema) delete next.json_schema;
+      return next;
+    });
     markDirty();
     if (node.data.blockType === "switch" && (name === "rules" || name === "fallback")) {
       const after = switchOutputs({ ...node.data.config, [name]: value });
@@ -152,7 +159,7 @@ function Header({
 }: {
   node: FlowNode;
   Icon: React.ComponentType<{ className?: string }>;
-  color: "trigger" | "flow" | "data" | "action";
+  color: BlockVisual["color"];
   onTestStep: () => void;
   testing: boolean;
   hideTest?: boolean;

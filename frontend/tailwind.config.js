@@ -30,6 +30,7 @@ export default {
         flow: "var(--t-flow)",
         data: "var(--t-data)",
         action: "var(--t-action)",
+        llm: "var(--t-llm)",
 
         // shadcn/ui theme variables, pointed at the same tokens.
         background: "var(--background)",

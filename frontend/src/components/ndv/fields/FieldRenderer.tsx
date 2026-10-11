@@ -1,6 +1,7 @@
 import type { FieldSchema } from "@/api/types";
 import { isFieldVisible } from "@/lib/showWhen";
 import { ScalarField } from "./ScalarField";
+import { TextField } from "./TextField";
 import { BooleanField } from "./BooleanField";
 import { OptionsField } from "./OptionsField";
 import { KeyValueListField } from "./KeyValueListField";
@@ -50,6 +51,7 @@ export function FieldRenderer({
           outputs={outputs}
           required={field.required}
           placeholder={field.placeholder}
+          description={field.description}
           onChange={set}
         />
       );
@@ -62,6 +64,19 @@ export function FieldRenderer({
           outputs={outputs}
           required={field.required}
           placeholder={field.placeholder}
+          description={field.description}
+          onChange={set}
+        />
+      );
+    case "text":
+      return (
+        <TextField
+          label={field.label}
+          value={value}
+          outputs={outputs}
+          required={field.required}
+          placeholder={field.placeholder}
+          description={field.description}
           onChange={set}
         />
       );
@@ -76,6 +91,7 @@ export function FieldRenderer({
           required={field.required}
           placeholder={field.placeholder}
           sensitive={field.sensitive}
+          description={field.description}
           onChange={set}
         />
       );

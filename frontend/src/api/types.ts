@@ -31,6 +31,8 @@ export interface WorkflowDefinition {
 
 export type FieldType =
   | "string"
+  /** Multi-line string; {{ }} expressions can sit anywhere in it. */
+  | "text"
   | "number"
   | "boolean"
   | "options"
