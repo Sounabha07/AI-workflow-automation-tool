@@ -33,6 +33,17 @@ export function TopBar() {
         >
           History
         </NavLink>
+        <NavLink
+          to="/credentials"
+          className={({ isActive }) =>
+            cn(
+              "flex h-full items-center border-b-2 border-transparent px-3 text-ink-3 no-underline",
+              isActive && "border-ink text-ink"
+            )
+          }
+        >
+          Credentials
+        </NavLink>
       </nav>
     </header>
   );

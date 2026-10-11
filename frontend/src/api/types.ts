@@ -39,7 +39,9 @@ export type FieldType =
   | "json"
   | "key_value_list"
   | "field_definitions"
-  | "switch_rules";
+  | "switch_rules"
+  /** Picks a saved credential by id (see /credentials). */
+  | "credential";
 
 export interface FieldOption {
   label: string;
@@ -59,6 +61,8 @@ export interface FieldSchema {
   description?: string;
   sensitive?: boolean;
   show_when?: Record<string, ShowWhenValue>;
+  /** For "credential" fields: which credential types can be picked. */
+  credential_types?: string[];
 }
 
 export interface BlockTypeSchema {
@@ -213,3 +217,23 @@ export interface RunStatusEvent {
 }
 
 export type RunEvent = BlockStatusEvent | RunStatusEvent;
+
+// ---------------------------------------------------------------------------
+// Saved credentials. Secrets are write-only: responses carry only a hint.
+// ---------------------------------------------------------------------------
+
+export interface Credential {
+  id: string;
+  name: string;
+  type: string;
+  type_label: string;
+  hint: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CredentialType {
+  type: string;
+  label: string;
+  fields: { name: string; label: string }[];
+}
