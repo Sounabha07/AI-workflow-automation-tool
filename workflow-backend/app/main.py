@@ -12,6 +12,7 @@ from app.api.routes_resume import router as resume_router
 from app.api.routes_hooks import router as hooks_router
 from app.api.routes_schedule import router as schedule_router
 from app.api.routes_blocks import router as blocks_router
+from app.api.routes_credentials import router as credentials_router
 from app.api.routes_ws import router as ws_router
 from app.errors import NotFoundError
 from app.validation import InvalidWorkflowError
@@ -41,6 +42,7 @@ app.include_router(resume_router, prefix="/resume", tags=["resume"])
 app.include_router(hooks_router, prefix="/hooks", tags=["hooks"])
 app.include_router(schedule_router, prefix="/schedule", tags=["schedule"])
 app.include_router(blocks_router, prefix="/blocks", tags=["blocks"])
+app.include_router(credentials_router, prefix="/credentials", tags=["credentials"])
 app.include_router(ws_router, tags=["ws"])
 
 

@@ -73,10 +73,13 @@ def _resolve_string(text: str, run_state: dict) -> Any:
         return _lookup(whole.group(1), run_state)
 
     # placeholder(s) embedded in surrounding text — stringify. Non-strings use
-    # JSON (true, {"a": 1}) rather than Python's repr (True, {'a': 1}).
+    # compact JSON (true, null, {"a": 1}) rather than Python's repr (True,
+    # None, {'a': 1}). Non-ASCII stays readable ("café", not "café"),
+    # matching the editor's JSON.stringify preview; anything JSON can't
+    # encode (dates) falls back to str().
     def replace(m):
         value = _lookup(m.group(1), run_state)
-        return value if isinstance(value, str) else json.dumps(value)
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
 
     return PLACEHOLDER.sub(replace, text)
 

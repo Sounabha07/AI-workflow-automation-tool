@@ -7,7 +7,13 @@ class EngineError(Exception):
 
 
 class RetryableError(EngineError):
-    """A failure that might succeed if retried."""
+    """A failure that might succeed if retried. retry_after_seconds is the
+    server's own hint (e.g. Retry-After); the task waits at least that long,
+    up to the block's backoff cap."""
+
+    def __init__(self, message: str = "", retry_after_seconds: float | None = None):
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class FatalError(EngineError):

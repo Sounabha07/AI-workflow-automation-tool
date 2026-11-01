@@ -171,3 +171,36 @@ class BlockSchemaResponse(BaseModel):
     type: str
     schema_: dict = Field(alias="schema")
     model_config = ConfigDict(populate_by_name=True)
+
+
+class CreateCredentialRequest(BaseModel):
+    name: str
+    type: str
+    # Secret fields for the type, e.g. {"api_key": "..."}. Never returned.
+    data: dict
+
+
+class UpdateCredentialRequest(BaseModel):
+    name: str | None = None
+    data: dict | None = None
+
+
+class CredentialResponse(BaseModel):
+    id: UUID
+    name: str
+    type: str
+    type_label: str
+    hint: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class CredentialTypeField(BaseModel):
+    name: str
+    label: str
+
+
+class CredentialTypeResponse(BaseModel):
+    type: str
+    label: str
+    fields: list[CredentialTypeField]

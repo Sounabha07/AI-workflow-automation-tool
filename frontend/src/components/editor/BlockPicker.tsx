@@ -2,7 +2,7 @@ import { useState, type RefObject } from "react";
 import { ChevronDown } from "lucide-react";
 import { useBlockSchemas } from "@/hooks/useBlockSchemas";
 import { useAddBlock } from "@/hooks/useAddBlock";
-import { CATEGORY_ORDER, COLOR_BG_CLASS, blockVisual } from "@/lib/blockVisuals";
+import { CATEGORY_LABEL, CATEGORY_ORDER, COLOR_BG_CLASS, blockVisual } from "@/lib/blockVisuals";
 import { cn } from "@/lib/utils";
 
 const CATEGORY_DOT_CLASS: Record<string, string> = {
@@ -10,6 +10,7 @@ const CATEGORY_DOT_CLASS: Record<string, string> = {
   Flow: "bg-flow",
   Data: "bg-data",
   Actions: "bg-action",
+  llm: "bg-llm",
   Communication: "bg-ink-3",
 };
 
@@ -45,7 +46,7 @@ export function BlockPicker({ wrapperRef }: { wrapperRef: RefObject<HTMLDivEleme
           >
             {CATEGORY_ORDER.map((c) => (
               <option key={c} value={c}>
-                {c} ({byCategory(c).length})
+                {CATEGORY_LABEL[c] ?? c} ({byCategory(c).length})
               </option>
             ))}
           </select>

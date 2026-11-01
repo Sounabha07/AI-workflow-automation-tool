@@ -18,6 +18,7 @@ export function ScalarField({
   sensitive,
   required,
   compact,
+  description,
 }: {
   label: string;
   value: unknown;
@@ -31,6 +32,8 @@ export function ScalarField({
    * toggle floats on the input's top edge instead, so the input lines up with
    * its neighbours. */
   compact?: boolean;
+  /** Muted help line under the input. */
+  description?: string;
 }) {
   const asString = value === undefined || value === null ? "" : typeof value === "string" ? value : JSON.stringify(value);
   const [mode, setMode] = useState<"fixed" | "expression">(
@@ -174,6 +177,7 @@ export function ScalarField({
         )}
       </div>
       {jsonError && mode === "fixed" && <div className="mt-1 text-xs text-err">{jsonError}</div>}
+      {description && !compact && <div className="mt-1 text-[11px] text-ink-3">{description}</div>}
 
       {showResult && (
         <div className="mt-1.5 break-all font-mono text-xs text-ink-3">

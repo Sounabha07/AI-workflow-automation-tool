@@ -26,7 +26,7 @@ def wire(monkeypatch):
 
         monkeypatch.setattr(engine, "get_connection", fake_get_connection)
         monkeypatch.setattr(engine.events, "publish", lambda run_id, e: published.append(e))
-        monkeypatch.setattr(engine, "_dispatch", lambda run_id, ids: dispatched.extend(ids))
+        monkeypatch.setattr(engine, "dispatch", lambda run_id, ids: dispatched.extend(ids))
         return published, dispatched
 
     return install

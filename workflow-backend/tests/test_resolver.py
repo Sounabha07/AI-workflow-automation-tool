@@ -103,3 +103,9 @@ async def test_build_run_state_without_seed(monkeypatch):
 
     monkeypatch.setattr(resolver, "get_connection", fake_get_connection)
     assert await resolver.build_run_state("run-2") == {"a": {"v": 1}}
+
+
+def test_embedded_objects_are_compact_json_with_readable_unicode():
+    state = {"a": {"obj": {"city": "Köln", "tags": ["x", None]}, "n": None}}
+    assert resolve("Data: {{ a.obj }}", state) == 'Data: {"city": "Köln", "tags": ["x", null]}'
+    assert resolve("n={{ a.n }}", state) == "n=null"

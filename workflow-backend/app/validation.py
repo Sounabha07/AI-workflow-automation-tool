@@ -5,14 +5,17 @@ Returns human readable problems; an empty list means the definition is valid.
 
 import re
 from typing import Any
+from uuid import UUID
 
 import blocks  # noqa: F401 -- importing this registers every block
+from app.llm import DEFAULT_PROVIDER, PROVIDERS
 from blocks import TRIGGER_TYPES, WAIT_TYPE
+from blocks.llm import RESPONSE_FORMATS, TEMPERATURE_RANGE
 from blocks.registry import list_registered_types
 from blocks.schedule_trigger import DEFAULT_TIMEZONE, schedule_problem
 from blocks.switch import FALLBACK, switch_outputs
 from blocks.wait_for_input import timeout_problem
-from engine.resolver import PLACEHOLDER, RESUME_NAMESPACE
+from engine.resolver import PLACEHOLDER, RESUME_NAMESPACE, parse_json_template
 
 BLOCK_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 RESERVED_BLOCK_IDS = {RESUME_NAMESPACE}
@@ -139,6 +142,9 @@ def validate_definition(definition: Any) -> list[str]:
             problems.append(f"Block '{block_id}': 'next' must be a list.")
             malformed.add(block_id)
 
+        if block_type == "llm":
+            problems.extend(llm_config_problems(block_id, b.get("config") or {}))
+
         if block_type in TRIGGER_TYPES and depends_on:
             problems.append(f"Trigger '{block_id}' can't have incoming connections.")
 
@@ -241,6 +247,80 @@ def validate_definition(definition: Any) -> list[str]:
                 color[nxt_node] = GREY
                 stack.append((nxt_node, iter(adjacency[nxt_node])))
                 path.append(nxt_node)
+
+    return problems
+
+
+def _is_template(value: Any) -> bool:
+    return isinstance(value, str) and "{{" in value
+
+
+def llm_config_problems(block_id: str, config: Any) -> list[str]:
+    """Config checks for an llm block. Values that are {{ }} expressions are
+    only known at run time, so the block re-checks them when it runs."""
+    if not isinstance(config, dict):
+        return [f"LLM '{block_id}': 'config' must be an object."]
+    problems: list[str] = []
+
+    provider = config.get("provider", DEFAULT_PROVIDER)
+    if provider not in PROVIDERS:
+        problems.append(
+            f"LLM '{block_id}': unknown provider '{provider}'. Use one of: {', '.join(PROVIDERS)}."
+        )
+
+    if "api_key" in config:
+        problems.append(
+            f"LLM '{block_id}': API keys can't be stored in a workflow. "
+            f"Save the key as a credential and select it instead."
+        )
+    credential = config.get("credential")
+    if credential not in (None, ""):
+        try:
+            UUID(str(credential))
+        except ValueError:
+            problems.append(f"LLM '{block_id}': 'credential' must be a saved credential's id.")
+
+    prompt = config.get("prompt")
+    if not isinstance(prompt, str) or not prompt.strip():
+        problems.append(f"LLM '{block_id}': the prompt can't be empty.")
+
+    temperature = config.get("temperature")
+    if temperature not in (None, "") and not _is_template(temperature):
+        lo, hi = TEMPERATURE_RANGE
+        try:
+            t = float(temperature)
+            if isinstance(temperature, bool) or not lo <= t <= hi:
+                raise ValueError
+        except (TypeError, ValueError):
+            problems.append(f"LLM '{block_id}': temperature must be a number from {lo:g} to {hi:g}.")
+
+    max_tokens = config.get("max_output_tokens")
+    if max_tokens not in (None, "") and not _is_template(max_tokens):
+        try:
+            n = float(max_tokens)
+            if isinstance(max_tokens, bool) or n != int(n) or n < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            problems.append(f"LLM '{block_id}': max output tokens must be a positive whole number.")
+
+    response_format = config.get("response_format", "text")
+    if response_format not in RESPONSE_FORMATS:
+        problems.append(f"LLM '{block_id}': response format must be 'text' or 'json'.")
+
+    schema = config.get("json_schema")
+    if schema not in (None, "", {}):
+        if response_format != "json":
+            problems.append(
+                f"LLM '{block_id}': a JSON schema is only used when the response format is 'json'."
+            )
+        parsed = schema
+        if isinstance(schema, str):
+            try:
+                parsed = parse_json_template(schema)
+            except ValueError:
+                parsed = None
+        if not isinstance(parsed, dict):
+            problems.append(f"LLM '{block_id}': the JSON schema must be a JSON object.")
 
     return problems
 

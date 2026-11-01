@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { TopBar } from "@/components/TopBar";
 import { WorkflowsPage } from "@/pages/WorkflowsPage";
 import { HistoryPage } from "@/pages/HistoryPage";
+import { CredentialsPage } from "@/pages/CredentialsPage";
 import { EditorPage } from "@/pages/EditorPage";
 
 const queryClient = new QueryClient({
@@ -41,6 +42,14 @@ export default function App() {
               element={
                 <Layout>
                   <HistoryPage />
+                </Layout>
+              }
+            />
+            <Route
+              path="/credentials"
+              element={
+                <Layout>
+                  <CredentialsPage />
                 </Layout>
               }
             />

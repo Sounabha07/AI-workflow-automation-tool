@@ -137,10 +137,12 @@ def main():
     check("GET /health reports ok", (h or {}).get("status") == "ok", err)
     _, blocks, _ = api("GET", "/blocks")
     types = [b["type"] for b in blocks or []]
-    check("seven block types registered", len(types) == 7, f"got: {types}")
+    check("eight block types registered", len(types) == 8, f"got: {types}")
     check("switch block is registered", "switch" in types)
     for t in ("schedule_trigger", "webhook_trigger", "wait_for_input"):
         check(f"{t} block is registered", t in types)
+    llm = next((b for b in blocks or [] if b["type"] == "llm"), None)
+    check("llm block is registered with category llm", bool(llm) and llm["schema"]["category"] == "llm")
 
     # Started early: its first tick (up to a minute away) overlaps the rest.
     sched_id, sched_started = schedule_setup_checks()
@@ -159,6 +161,15 @@ def main():
         "a": blk("http_request", http_cfg(HEALTH), ["t", "a"], ["a"], 200)}}
     status, _, _ = api("POST", "/pipelines", {"name": f"{PREFIX}_self", "definition": self_loop})
     check("a self-loop is rejected with 400", status == 400, f"status {status}")
+    # Validation only: nothing here reaches an LLM provider.
+    bad_llm = {"blocks": {
+        "t": blk("manual_trigger", {}, [], ["l"], 0),
+        "l": blk("llm", {"provider": "nope", "prompt": " ", "temperature": 5}, ["t"], [], 200)}}
+    status, data, _ = api("POST", "/pipelines", {"name": f"{PREFIX}_llm_bad", "definition": bad_llm})
+    problems = " ".join((data or {}).get("problems") or [])
+    check("a bad llm config is rejected with 400", status == 400, f"status {status}")
+    check("the 400 names the provider, prompt and temperature",
+          all(w in problems for w in ("unknown provider", "prompt", "temperature")), problems)
 
     section("3. Input block, resolver and HTTP block")
     fields = [{"name": "path", "label": "Path", "type": "text", "required": True, "description": ""}]
@@ -270,7 +281,43 @@ def main():
     lo = api("GET", f"/pipelines/{branch_id}/latest-outputs")[1] or {}
     check("latest-outputs includes the tested block", "big_call" in lo)
 
-    section("10. Deleting a workflow deletes its run history")
+    section("10. Saved credentials (no LLM is ever called)")
+    secret = f"AIza-smoke-{uuid.uuid4().hex}"
+    cred_name = f"{PREFIX}_cred"
+    status, cred, err = api("POST", "/credentials",
+                            {"name": cred_name, "type": "gemini_api_key", "data": {"api_key": secret}})
+    check("POST /credentials returns 201", status == 201, f"status {status} {err}")
+    check("the response never contains the secret", secret not in json.dumps(cred))
+    check("the response shows a hint of the last 4 characters", (cred or {}).get("hint") == "…" + secret[-4:])
+    listed = api("GET", "/credentials")[1] or []
+    check("GET /credentials lists it without the secret",
+          any(c["id"] == (cred or {}).get("id") for c in listed) and secret not in json.dumps(listed))
+    status, _, _ = api("POST", "/credentials", {"name": cred_name, "type": "gemini_api_key", "data": {"api_key": "x" * 20}})
+    check("a duplicate name is rejected with 409", status == 409, f"status {status}")
+    status, _, _ = api("POST", "/credentials", {"name": f"{cred_name}_bad", "type": "nope", "data": {"api_key": "x"}})
+    check("an unknown credential type is rejected with 400", status == 400, f"status {status}")
+    with_key = {"blocks": {"t": blk("manual_trigger", {}, [], ["l"], 0),
+                           "l": blk("llm", {"prompt": "hi", "api_key": "AIza-plain"}, ["t"], [], 200)}}
+    status, _, _ = api("POST", "/pipelines", {"name": f"{PREFIX}_llm_plainkey", "definition": with_key})
+    check("a plain API key in a workflow is rejected with 400", status == 400, f"status {status}")
+    if cred:
+        uses = {"blocks": {"t": blk("manual_trigger", {}, [], ["l"], 0),
+                           "l": blk("llm", {"prompt": "hi", "credential": cred["id"]}, ["t"], [], 200)}}
+        uses_id = new_pipe("llm_cred", uses)
+        status, _, err = api("DELETE", f"/credentials/{cred['id']}")
+        check("deleting a credential in use is rejected with 409", status == 409 and "llm_cred" in err, f"status {status}")
+        api("DELETE", f"/pipelines/{uses_id}")
+        check("an unused credential can be deleted", api("DELETE", f"/credentials/{cred['id']}")[0] == 204)
+    # A credential id that doesn't exist fails at run time, once, before any network call.
+    gone = {"blocks": {"t": blk("manual_trigger", {}, [], ["l"], 0),
+                       "l": blk("llm", {"prompt": "hi", "credential": str(uuid.uuid4())}, ["t"], [], 200)}}
+    run = wait_run(start_run(new_pipe("llm_gone", gone)))
+    err_l = (run and block_of(run["id"], "l").get("error")) or {}
+    check("a missing credential fails once, not retryable",
+          status_of(run) == "failed" and err_l.get("attempts") == 1 and err_l.get("retryable") is False
+          and "no longer exists" in err_l.get("message", ""), json.dumps(err_l))
+
+    section("11. Deleting a workflow deletes its run history")
     check("DELETE of a workflow with runs returns 204", api("DELETE", f"/pipelines/{branch_id}")[0] == 204)
     check("the pipeline is gone", api("GET", f"/pipelines/{branch_id}")[0] == 404)
     if branch_run_id:

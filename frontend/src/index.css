@@ -29,6 +29,7 @@
   --t-flow: #c8457f;
   --t-data: #13a38a;
   --t-action: #d9731a;
+  --t-llm: #0e7fc0;
 
   /* shadcn/ui theme variables, pointed at the tokens above */
   --background: var(--canvas);

@@ -30,6 +30,12 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://dag_user:dag_password@postgres:5432/dag_db
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
+      # Decrypts saved credentials (clients' own API keys). Same value as the api.
+      - CREDENTIALS_ENCRYPTION_KEY=${CREDENTIALS_ENCRYPTION_KEY:-}
+      # Server-wide fallback for llm blocks with no credential selected, read
+      # from workflow-backend/.env. Empty is fine: those blocks then fail fast.
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_BASE_URL=${GEMINI_BASE_URL:-}
     volumes:
       - .:/app
     depends_on:
@@ -38,7 +44,7 @@ services:
       postgres:
         condition: service_healthy
 
-  # Enqueues the periodic tasks (wait timeouts, due schedules) every 15s;
+  # Enqueues the periodic tasks (wait timeouts, due schedules, stuck blocks);
   # the worker runs them. The schedule file lives in /tmp so nothing is
   # written into the bind-mounted repo.
   beat:
@@ -60,6 +66,8 @@ services:
       - DATABASE_URL=postgresql://dag_user:dag_password@postgres:5432/dag_db
       - REDIS_URL=redis://redis:6379/0
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
+      # Encrypts credentials saved through /credentials.
+      - CREDENTIALS_ENCRYPTION_KEY=${CREDENTIALS_ENCRYPTION_KEY:-}
     ports:
       - "8000:8000"
     volumes:

@@ -57,6 +57,13 @@ export function nodeSubtitle(data: BlockNodeData): string {
     return fields.map((f) => f.name).filter(Boolean).join(", ");
   }
 
+  if (blockType === "llm") {
+    const model = typeof config.model === "string" ? config.model.trim() : "";
+    const prompt = typeof config.prompt === "string" ? config.prompt.trim() : "";
+    if (!prompt) return "Not configured";
+    return model || "Default model";
+  }
+
   return "";
 }
 

@@ -154,8 +154,7 @@ async def test_step(body: TestStepRequest) -> TestStepResponse:
 
     # 8. After commit, publish and dispatch task
     engine.publish_run_started(str(run_id), body.pipeline_id)
-    from tasks import execute_block_task
-    execute_block_task.delay(str(run_id), body.block_id)
+    engine.dispatch(str(run_id), [body.block_id])
 
     # 9. Return 202
     return TestStepResponse(run_id=run_id)

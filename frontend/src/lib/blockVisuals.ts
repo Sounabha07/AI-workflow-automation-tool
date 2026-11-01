@@ -1,10 +1,10 @@
-import { Clock, FormInput, Globe, Hourglass, Play, Split, Webhook, type LucideIcon } from "lucide-react";
+import { Clock, FormInput, Globe, Hourglass, Play, Sparkles, Split, Webhook, type LucideIcon } from "lucide-react";
 
 export interface BlockVisual {
   label: string;
   icon: LucideIcon;
   /** Tailwind color token name, matching PROMPT.md B2's category colors. */
-  color: "trigger" | "flow" | "data" | "action";
+  color: "trigger" | "flow" | "data" | "action" | "llm";
   isTrigger?: boolean;
 }
 
@@ -16,6 +16,7 @@ export const BLOCK_VISUALS: Record<string, BlockVisual> = {
   wait_for_input: { label: "Wait", icon: Hourglass, color: "flow" },
   input_block: { label: "Input", icon: FormInput, color: "data" },
   http_request: { label: "HTTP", icon: Globe, color: "action" },
+  llm: { label: "LLM", icon: Sparkles, color: "llm" },
 };
 
 export function blockVisual(type: string): BlockVisual {
@@ -25,13 +26,17 @@ export function blockVisual(type: string): BlockVisual {
 }
 
 /** Category order for the block picker (B2). */
-export const CATEGORY_ORDER = ["Triggers", "Flow", "Data", "Actions", "Communication"] as const;
+export const CATEGORY_ORDER = ["Triggers", "Flow", "Data", "Actions", "llm", "Communication"] as const;
+
+/** Display name when a category id isn't already one. */
+export const CATEGORY_LABEL: Record<string, string> = { llm: "LLMs" };
 
 export const CATEGORY_COLOR: Record<string, string> = {
   Triggers: "trigger",
   Flow: "flow",
   Data: "data",
   Actions: "action",
+  llm: "llm",
   Communication: "ink-3",
 };
 
@@ -43,6 +48,7 @@ export const COLOR_TEXT_CLASS: Record<BlockVisual["color"], string> = {
   flow: "text-flow",
   data: "text-data",
   action: "text-action",
+  llm: "text-llm",
 };
 
 export const COLOR_BG_CLASS: Record<BlockVisual["color"], string> = {
@@ -50,4 +56,5 @@ export const COLOR_BG_CLASS: Record<BlockVisual["color"], string> = {
   flow: "bg-flow",
   data: "bg-data",
   action: "bg-action",
+  llm: "bg-llm",
 };

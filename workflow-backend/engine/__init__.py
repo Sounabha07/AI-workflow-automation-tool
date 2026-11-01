@@ -12,9 +12,14 @@ and its own edges propagate as dead, recursively, in the same transaction.
 Wait-for-input blocks park in status 'waiting' without holding a worker.
 resume_waiting_block() and the timeout sweep each claim the block with a
 conditional UPDATE (status = 'waiting'), so exactly one of them wins.
+
+Tasks are delivered at least once, so finishing a block is safe to repeat:
+only the first finish counts. Queuing isn't transactional, so a block can
+end up 'ready' with no task behind it; sweep_stuck_blocks recovers those.
 """
 
 import json
+import logging
 import secrets
 from datetime import datetime, timezone
 from typing import NamedTuple
@@ -23,7 +28,17 @@ import events
 from blocks import TRIGGER_TYPES, WAIT_TYPE
 from db import get_connection
 
+logger = logging.getLogger(__name__)
+
 MASK = "••••••••"
+
+# How long a 'ready' block waits for a worker before it is queued again.
+READY_STALE_SECONDS = 300
+# Longer than Redis's default 1-hour redelivery window, so a task lost with
+# its worker has had its chance to come back before the run is failed.
+RUNNING_STALE_SECONDS = 7200
+
+_NOT_FINISHED = "status NOT IN ('succeeded', 'failed', 'skipped', 'cancelled')"
 
 
 def _load_json(v):
@@ -69,6 +84,18 @@ def publish_run_started(run_id: str, pipeline_id) -> None:
     events.publish(run_id, _run_event(pipeline_id, "running"))
 
 
+def dispatch(run_id: str, block_ids: list[str]) -> None:
+    """Queues blocks whose state is already committed. A failure is only
+    logged: the blocks stay 'ready' and sweep_stuck_blocks queues them again."""
+    from tasks import execute_block_task
+
+    for block_id in block_ids:
+        try:
+            execute_block_task.delay(run_id, block_id)
+        except Exception:
+            logger.exception("Could not queue block %s of run %s", block_id, run_id)
+
+
 def mask_sensitive(config: dict, schema: dict) -> dict:
     """Copy of config with every schema field marked sensitive replaced by MASK."""
     sensitive = {f["name"] for f in schema.get("fields", []) if f.get("sensitive")}
@@ -100,8 +127,8 @@ async def insert_block_execution(
     wait_for_input row gets its resume_token when its run is created."""
     await conn.execute(
         """
-        INSERT INTO block_executions (run_id, block_id, block_type, status, remaining_deps, resume_token)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO block_executions (run_id, block_id, block_type, status, remaining_deps, resume_token, ready_at)
+        VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $7::boolean THEN NOW() END)
         """,
         run_id,
         block_id,
@@ -109,6 +136,7 @@ async def insert_block_execution(
         status,
         remaining_deps,
         secrets.token_urlsafe(32) if block_type == WAIT_TYPE else None,
+        status == "ready",
     )
 
 
@@ -203,11 +231,7 @@ def dispatch_run(run: CreatedRun) -> None:
     if not run.created:
         return
     publish_run_started(run.run_id, run.pipeline_id)
-
-    from tasks import execute_block_task
-
-    for block_id in run.ready_block_ids:
-        execute_block_task.delay(run.run_id, block_id)
+    dispatch(run.run_id, run.ready_block_ids)
 
 
 async def start_run(
@@ -238,20 +262,38 @@ async def start_run(
     return run
 
 
-async def is_run_failed(run_id: str) -> bool:
-    """Checked before every dispatch — the enforcement mechanism for
-    'no new work starts after a failure'. A run that no longer exists (its
-    pipeline was deleted mid-run, cascading to the run) also stops here."""
+async def claim_block(run_id: str, block_id: str, resuming: bool) -> bool:
+    """Checked before every execution, and atomic so only one task can take a
+    'ready' block. False means don't run it: the block is finished or another
+    worker has it, or the run failed ('no new work starts after a failure') or
+    no longer exists (its pipeline was deleted mid-run, cascading to the run).
+    resuming is true for a retry or a redelivery, whose block is already
+    'running' because this same task claimed it earlier."""
     conn = await get_connection()
     try:
-        status = await conn.fetchval("SELECT status FROM runs WHERE id = $1", run_id)
-        return status is None or status == "failed"
+        claimed = await conn.fetchval(
+            """
+            UPDATE block_executions be
+            SET status = 'running', started_at = COALESCE(be.started_at, NOW())
+            FROM runs r
+            WHERE be.run_id = $1 AND be.block_id = $2
+              AND r.id = be.run_id AND r.status = 'running'
+              AND (be.status = 'ready' OR (be.status = 'running' AND $3::boolean))
+            RETURNING be.id
+            """,
+            run_id,
+            block_id,
+            resuming,
+        )
+        return claimed is not None
     finally:
         await conn.close()
 
 
 async def get_block_context(run_id: str, block_id: str) -> dict:
-    """Raises ValueError when a {{ }} reference can't be resolved."""
+    """Raises ValueError when a {{ }} reference can't be resolved or the
+    block's saved credential can't be used."""
+    from app.credentials import CredentialError, credential_fields, load_block_credentials
     from blocks.registry import get_block_class
     from engine.resolver import build_run_state, resolve, structure_json_fields
 
@@ -297,23 +339,36 @@ async def get_block_context(run_id: str, block_id: str) -> dict:
     if row["block_type"] in TRIGGER_TYPES:
         trigger_payload = _load_json(row["trigger_payload"])
 
+    # Saved credentials are decrypted here and travel separately from config,
+    # so the secret never reaches resolved_config. The id comes from the raw
+    # config: credential fields aren't templates.
+    credentials = None
+    if credential_fields(schema):
+        conn = await get_connection()
+        try:
+            credentials = await load_block_credentials(conn, raw_config, schema)
+        except CredentialError as e:
+            raise ValueError(f"Credential error: {e}") from None
+        finally:
+            await conn.close()
+
     return {
         "block_type": row["block_type"],
         "config": resolved_config,
         "input_data": trigger_payload if isinstance(trigger_payload, dict) else {},
+        "credentials": credentials,
     }
 
 
 async def mark_running(run_id: str, block_id: str, resolved_config: dict, schema: dict) -> bool:
     """Stores the resolved config with sensitive fields masked. Returns
-    False, changing nothing, unless the block is ready (or running, on a
-    retry), so a redelivered task can't drag a waiting or finished block back."""
+    False, changing nothing, unless the block is still running (claim_block
+    set that), so a stale task can't touch a waiting or finished block."""
     conn = await get_connection()
     try:
         retry_count = await conn.fetchval(
-            "UPDATE block_executions SET status = 'running', "
-            "started_at = COALESCE(started_at, NOW()), resolved_config = $3 "
-            "WHERE run_id = $1 AND block_id = $2 AND status IN ('ready', 'running') "
+            "UPDATE block_executions SET resolved_config = $3 "
+            "WHERE run_id = $1 AND block_id = $2 AND status = 'running' "
             "RETURNING retry_count",
             run_id,
             block_id,
@@ -415,7 +470,8 @@ async def _propagate(
 
         if row["live_deps"] > 0:
             await conn.execute(
-                "UPDATE block_executions SET status = 'ready' WHERE run_id = $1 AND block_id = $2",
+                "UPDATE block_executions SET status = 'ready', ready_at = NOW() "
+                "WHERE run_id = $1 AND block_id = $2",
                 run_id,
                 target,
             )
@@ -459,13 +515,6 @@ async def _after_success(
     await _decrement_run_counter(conn, run_id, pending_events)
 
 
-def _dispatch(run_id: str, block_ids: list[str]) -> None:
-    from tasks import execute_block_task
-
-    for bid in block_ids:
-        execute_block_task.delay(run_id, bid)
-
-
 async def handle_block_success(run_id: str, block_id: str, output: dict) -> None:
     conn = await get_connection()
     to_dispatch: list[str] = []
@@ -475,15 +524,16 @@ async def handle_block_success(run_id: str, block_id: str, output: dict) -> None
             # Every terminal transition (success, resume, failure) locks the
             # run row before any block row, so they can't deadlock each other.
             await conn.execute("SELECT 1 FROM runs WHERE id = $1 FOR UPDATE", run_id)
+            # Only the first finish counts: a repeat must not touch the counters.
             retry_count = await conn.fetchval(
-                "UPDATE block_executions SET status = 'succeeded', output = $1, finished_at = NOW() "
-                "WHERE run_id = $2 AND block_id = $3 RETURNING retry_count",
+                f"UPDATE block_executions SET status = 'succeeded', output = $1, finished_at = NOW() "
+                f"WHERE run_id = $2 AND block_id = $3 AND {_NOT_FINISHED} RETURNING retry_count",
                 json.dumps(output, default=str),
                 run_id,
                 block_id,
             )
             if retry_count is None:
-                return  # the run was deleted while this block executed
+                return  # already finished, or the run was deleted while it executed
             await _after_success(
                 conn, run_id, block_id, output, retry_count, to_dispatch, pending_events
             )
@@ -491,7 +541,7 @@ async def handle_block_success(run_id: str, block_id: str, output: dict) -> None
         await conn.close()
 
     _publish_all(run_id, pending_events)
-    _dispatch(run_id, to_dispatch)
+    dispatch(run_id, to_dispatch)
 
 
 class ResumeResult(NamedTuple):
@@ -565,7 +615,7 @@ async def resume_waiting_block(token: str, data: dict) -> ResumeResult:
 
     run_id = str(row["run_id"])
     _publish_all(run_id, pending_events)
-    _dispatch(run_id, to_dispatch)
+    dispatch(run_id, to_dispatch)
     return ResumeResult("resumed", run_id, row["block_id"], "succeeded")
 
 
@@ -637,12 +687,13 @@ async def handle_block_failure(
                 "retryable": retryable,
             }
             retry_count = max(attempts - 1, 0)
+            # Only the first finish counts: a repeat must not touch the counters.
             claimed = await conn.fetchval(
-                "UPDATE block_executions SET status = 'failed', error = $1, "
-                "is_retryable_error = $2, retry_count = $3, "
-                "started_at = COALESCE(started_at, NOW()), finished_at = NOW() "
-                "WHERE run_id = $4 AND block_id = $5 "
-                "AND ($6::text IS NULL OR status::text = $6) RETURNING 1",
+                f"UPDATE block_executions SET status = 'failed', error = $1, "
+                f"is_retryable_error = $2, retry_count = $3, "
+                f"started_at = COALESCE(started_at, NOW()), finished_at = NOW() "
+                f"WHERE run_id = $4 AND block_id = $5 AND {_NOT_FINISHED} "
+                f"AND ($6::text IS NULL OR status::text = $6) RETURNING 1",
                 json.dumps(error),
                 retryable,
                 retry_count,
@@ -714,3 +765,54 @@ async def sweep_wait_timeouts(limit: int = 200) -> int:
         ):
             failed += 1
     return failed
+
+
+async def sweep_stuck_blocks() -> None:
+    """Recovers what a crash or a queue failure left behind, in runs that are
+    still 'running'. A block queued twice is harmless (claim_block), and a
+    failed block that turns out to be alive can't finish twice."""
+    conn = await get_connection()
+    try:
+        requeue = await conn.fetch(
+            """
+            UPDATE block_executions be
+            SET ready_at = NOW()
+            FROM runs r
+            WHERE r.id = be.run_id AND r.status = 'running'
+              AND be.status = 'ready'
+              AND be.ready_at < NOW() - make_interval(secs => $1)
+            RETURNING be.run_id, be.block_id
+            """,
+            float(READY_STALE_SECONDS),
+        )
+        # 'ready' with no ready_at predates this column. Those blocks are too
+        # old to run now: their side effects would happen long after the fact.
+        abandoned = await conn.fetch(
+            """
+            SELECT be.run_id, be.block_id, be.retry_count, be.status
+            FROM block_executions be
+            JOIN runs r ON r.id = be.run_id
+            WHERE r.status = 'running'
+              AND ((be.status = 'ready' AND be.ready_at IS NULL)
+                OR (be.status = 'running'
+                    AND COALESCE(be.started_at, be.created_at) < NOW() - make_interval(secs => $1)))
+            """,
+            float(RUNNING_STALE_SECONDS),
+        )
+    finally:
+        await conn.close()
+
+    for row in requeue:
+        logger.warning("Requeuing stuck block %s of run %s", row["block_id"], row["run_id"])
+        dispatch(str(row["run_id"]), [row["block_id"]])
+
+    for row in abandoned:
+        logger.warning("Failing stuck block %s of run %s", row["block_id"], row["run_id"])
+        reason = "was never picked up" if row["status"] == "ready" else "stopped responding"
+        await handle_block_failure(
+            str(row["run_id"]),
+            row["block_id"],
+            f"This block {reason}, probably because a worker crashed. Run the workflow again.",
+            False,
+            row["retry_count"] + 1,
+        )

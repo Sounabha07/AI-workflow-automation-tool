@@ -30,7 +30,7 @@ async def test_success_after_the_run_vanished_writes_nothing_more(fake_conn, mon
     conn = fake_conn(ScriptedConn())  # UPDATE ... RETURNING retry_count finds no row
     published, dispatched = [], []
     monkeypatch.setattr(engine.events, "publish", lambda run_id, e: published.append(e))
-    monkeypatch.setattr(engine, "_dispatch", lambda run_id, ids: dispatched.extend(ids))
+    monkeypatch.setattr(engine, "dispatch", lambda run_id, ids: dispatched.extend(ids))
 
     await engine.handle_block_success("r1", "b1", {"x": 1})
 
@@ -43,14 +43,14 @@ def task_engine(monkeypatch):
     """Stubs the engine calls execute_block_task makes; records failures."""
     failures = []
 
-    async def not_failed(run_id):
-        return False
+    async def claimed(run_id, block_id, resuming):
+        return True
 
     async def record_failure(run_id, block_id, message, retryable, attempts, from_status=None):
         failures.append(message)
         return True
 
-    monkeypatch.setattr(engine, "is_run_failed", not_failed)
+    monkeypatch.setattr(engine, "claim_block", claimed)
     monkeypatch.setattr(engine, "handle_block_failure", record_failure)
     return failures
 

@@ -30,6 +30,11 @@ celery_app.conf.update(
             "schedule": 15.0,
             "options": {"expires": 14},
         },
+        "sweep-stuck-blocks": {
+            "task": "tasks.sweep_stuck_blocks",
+            "schedule": 60.0,
+            "options": {"expires": 60},
+        },
     },
 )
 
