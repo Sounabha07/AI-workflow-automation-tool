@@ -74,14 +74,24 @@ export function highlightExpression(text: string): ExpressionSegment[] {
   return segments;
 }
 
+/** The reserved namespace for wait blocks' resume links:
+ * {{ resume.<wait_block_id>.url }} / .token. Never a block id, never an edge. */
+export const RESUME_NAMESPACE = "resume";
+
 /** Rewrites every {{ oldId.<path> }} (or bare {{ oldId }}) reference to newId,
- * walking arbitrarily nested config. Used when a block is renamed (B7 Settings). */
+ * and {{ resume.oldId.<field> }} for a renamed wait block, walking arbitrarily
+ * nested config. Used when a block is renamed (B7 Settings). */
 export function renameReferences<T>(value: T, oldId: string, newId: string): T {
   if (typeof value === "string") {
     const renamed = value.replace(
       /\{\{\s*([a-z][a-z0-9_]*)((?:\.[\w]+)*)\s*\}\}/g,
-      (match, blockId: string, path: string) =>
-        blockId === oldId ? `{{ ${newId}${path} }}` : match
+      (match, blockId: string, path: string) => {
+        if (blockId === oldId) return `{{ ${newId}${path} }}`;
+        if (blockId === RESUME_NAMESPACE && (path === `.${oldId}` || path.startsWith(`.${oldId}.`))) {
+          return `{{ ${RESUME_NAMESPACE}.${newId}${path.slice(oldId.length + 1)} }}`;
+        }
+        return match;
+      }
     );
     return renamed as unknown as T;
   }

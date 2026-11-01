@@ -4,7 +4,9 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 
 import engine
+from blocks import TRIGGER_TYPES
 from db import get_connection
+from engine.resolver import resume_url
 from app.errors import NotFoundError
 from app.validation import ancestors, ensure_valid
 from app.api.routes_pipelines import fetch_latest_outputs
@@ -40,6 +42,8 @@ def _run_fields(row: dict) -> dict:
         blocks_remaining=row["blocks_remaining"],
         error_summary=_parse_optional_jsonb(row.get("error_summary")),
         input_data=_parse_optional_jsonb(row.get("input_data")),
+        trigger_type=row.get("trigger_type") or "manual",
+        trigger_payload=_parse_optional_jsonb(row.get("trigger_payload")),
         created_at=row["created_at"],
         started_at=row.get("started_at"),
         finished_at=row.get("finished_at"),
@@ -61,6 +65,8 @@ def _row_to_block_execution_response(row: dict) -> BlockExecutionResponse:
         error=_parse_jsonb(row.get("error")) if row.get("error") else None,
         started_at=row.get("started_at"),
         finished_at=row.get("finished_at"),
+        resume_url=resume_url(row["resume_token"]) if row.get("resume_token") else None,
+        wait_deadline=row.get("wait_deadline"),
     )
 
 
@@ -102,6 +108,11 @@ async def test_step(body: TestStepRequest) -> TestStepResponse:
             bid: v["output"] for bid, v in latest.items()
             if bid in upstream and v["output"] is not None
         }
+        # A sample trigger payload stands in for the upstream trigger's output.
+        if body.trigger_payload is not None:
+            for bid in upstream:
+                if definition["blocks"][bid].get("type") in TRIGGER_TYPES:
+                    seed_outputs[bid] = body.trigger_payload
 
         # 6. Build minimal snapshot
         minimal_snapshot = {
@@ -114,34 +125,29 @@ async def test_step(body: TestStepRequest) -> TestStepResponse:
             }
         }
 
-        # 7. Inside a transaction: insert run + block_execution
+        # 7. Inside a transaction: insert run + block_execution. A tested
+        # trigger block outputs trigger_payload; a tested wait block gets a
+        # resume token and waits like it would in a full run.
         async with conn.transaction():
             run_id = await conn.fetchval(
                 """
                 INSERT INTO runs (
                     pipeline_id, run_type, pipeline_snapshot,
                     input_data, seed_outputs, total_blocks, blocks_remaining,
-                    status, started_at
+                    status, started_at, trigger_payload
                 )
-                VALUES ($1, 'test', $2, $3, $4, 1, 1, 'running', NOW())
+                VALUES ($1, 'test', $2, $3, $4, 1, 1, 'running', NOW(), $5)
                 RETURNING id
                 """,
                 body.pipeline_id,
                 json.dumps(minimal_snapshot),
                 json.dumps(body.input_data),
                 json.dumps(seed_outputs, default=str),
+                None if body.trigger_payload is None else json.dumps(body.trigger_payload),
             )
 
-            await conn.execute(
-                """
-                INSERT INTO block_executions (
-                    run_id, block_id, block_type, status, remaining_deps, ready_at
-                )
-                VALUES ($1, $2, $3, 'ready', 0, NOW())
-                """,
-                run_id,
-                body.block_id,
-                block_def["type"],
+            await engine.insert_block_execution(
+                conn, run_id, body.block_id, block_def["type"], "ready", 0
             )
     finally:
         await conn.close()
@@ -179,7 +185,7 @@ async def list_runs(
         )
         rows = await conn.fetch(
             f"""
-            SELECT r.id, r.pipeline_id, p.name AS pipeline_name, r.status,
+            SELECT r.id, r.pipeline_id, p.name AS pipeline_name, r.status, r.trigger_type,
                    r.input_data, r.error_summary, r.total_blocks,
                    (SELECT count(*) FROM block_executions be
                     WHERE be.run_id = r.id
@@ -229,13 +235,15 @@ async def trigger_run(body: TriggerRunRequest) -> dict:
     finally:
         await conn.close()
 
-    run_id = await engine.start_run(
+    run = await engine.start_run(
         str(body.pipeline_id),
         input_data=body.input_data,
+        trigger_type="manual",
+        trigger_payload=body.trigger_payload,
         activate=True,
     )
     # Activation committed with the run, so the pipeline is active now.
-    return {"run_id": run_id, "status": "running", "pipeline_is_active": True}
+    return {"run_id": run.run_id, "status": "running", "pipeline_is_active": True}
 
 
 @router.get("/{run_id}", response_model=RunDetailResponse)

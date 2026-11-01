@@ -29,6 +29,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://dag_user:dag_password@postgres:5432/dag_db
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
       # Decrypts saved credentials (clients' own API keys). Same value as the api.
       - CREDENTIALS_ENCRYPTION_KEY=${CREDENTIALS_ENCRYPTION_KEY:-}
       # Server-wide fallback for llm blocks with no credential selected, read
@@ -43,11 +44,12 @@ services:
       postgres:
         condition: service_healthy
 
-  # Runs the periodic sweep for stuck blocks. The schedule file stays out of
-  # the mounted source folder.
+  # Enqueues the periodic tasks (wait timeouts, due schedules, stuck blocks);
+  # the worker runs them. The schedule file lives in /tmp so nothing is
+  # written into the bind-mounted repo.
   beat:
     build: .
-    command: celery -A tasks beat --loglevel=info -s /tmp/celerybeat-schedule
+    command: celery -A tasks beat --loglevel=info --schedule /tmp/celerybeat-schedule
     environment:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://dag_user:dag_password@postgres:5432/dag_db
@@ -56,8 +58,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
 
   api:
     build: .
@@ -65,6 +65,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://dag_user:dag_password@postgres:5432/dag_db
       - REDIS_URL=redis://redis:6379/0
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
       # Encrypts credentials saved through /credentials.
       - CREDENTIALS_ENCRYPTION_KEY=${CREDENTIALS_ENCRYPTION_KEY:-}
     ports:

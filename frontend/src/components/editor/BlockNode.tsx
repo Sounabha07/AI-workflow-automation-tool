@@ -1,6 +1,6 @@
 import { memo, useEffect } from "react";
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
-import { AlertTriangle, Check, Play, SkipForward } from "lucide-react";
+import { AlertTriangle, Ban, Check, Hourglass, Play, SkipForward } from "lucide-react";
 import { blockVisual, COLOR_TEXT_CLASS } from "@/lib/blockVisuals";
 import { nodeSubtitle, switchOutputs } from "@/lib/nodeSubtitle";
 import type { FlowNode } from "@/lib/definition";
@@ -26,7 +26,8 @@ const BORDER_BY_STATUS: Record<string, string> = {
   skipped: "border-dashed border-[#B8C0CC]",
   not_run: "border-dashed border-line-2 opacity-55",
   pending: "border-dashed border-line-2 opacity-55",
-  waiting: "border-dashed border-line-2 opacity-55",
+  waiting: "border-run",
+  cancelled: "border-dashed border-[#B8C0CC]",
   ready: "border-line-2",
   idle: "border-line-2",
 };
@@ -45,10 +46,10 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
 
   // A manual trigger has no parameters, so activating it runs the workflow
   // instead of opening the block editor. This always runs the WHOLE workflow,
-  // exactly like "Run workflow": with more trigger types or several triggers
-  // per workflow, starting from this specific trigger would need a new run
-  // API (known scope boundary).
-  const activate = () => (visual.isTrigger ? runWorkflow?.() : openEditor(id));
+  // exactly like "Run workflow". Schedule and webhook triggers have settings,
+  // so they open the editor like any other block.
+  const runsOnActivate = data.blockType === "manual_trigger";
+  const activate = () => (runsOnActivate ? runWorkflow?.() : openEditor(id));
 
   // Switch outputs (and so handles) can change after the node has already
   // mounted — adding/removing/renaming a rule — and React Flow caches each
@@ -65,8 +66,8 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
       <div
         role="button"
         tabIndex={0}
-        aria-label={visual.isTrigger ? `${id}: run workflow` : `${id} block`}
-        title={visual.isTrigger ? "Double-click to run the workflow" : undefined}
+        aria-label={runsOnActivate ? `${id}: run workflow` : `${id} block`}
+        title={runsOnActivate ? "Double-click to run the workflow" : undefined}
         onDoubleClick={activate}
         onKeyDown={(e) => e.key === "Enter" && activate()}
         style={{
@@ -96,7 +97,13 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
           )}
         />
 
-        <Icon className={cn("h-8 w-8", COLOR_TEXT_CLASS[visual.color], status === "skipped" && "opacity-45")} />
+        <Icon
+          className={cn(
+            "h-8 w-8",
+            COLOR_TEXT_CLASS[visual.color],
+            (status === "skipped" || status === "cancelled") && "opacity-45"
+          )}
+        />
 
         {visual.isTrigger && (
           <span
@@ -114,6 +121,22 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
         {status === "failed" && (
           <span className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full border-2 border-canvas bg-err text-white">
             <AlertTriangle className="h-3 w-3" />
+          </span>
+        )}
+        {status === "waiting" && (
+          <span
+            title="Waiting for input"
+            className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full border-2 border-canvas bg-run text-white"
+          >
+            <Hourglass className="h-3 w-3" />
+          </span>
+        )}
+        {status === "cancelled" && (
+          <span
+            title="Cancelled"
+            className="absolute -right-2 -top-2 grid h-5 w-5 place-items-center rounded-full border-2 border-canvas bg-[#9AA4B2] text-white"
+          >
+            <Ban className="h-3 w-3" />
           </span>
         )}
         {status === "skipped" && (

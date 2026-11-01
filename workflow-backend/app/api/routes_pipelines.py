@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 
 from db import get_connection
+from engine.triggers import list_triggers, list_wait_links, set_pipeline_active, sync_triggers
 from app.errors import NotFoundError
 from app.validation import ensure_valid
 from app.api.models import (
@@ -13,6 +14,7 @@ from app.api.models import (
     PatchPipelineRequest,
     PipelineResponse,
     PipelineListItem,
+    PipelineTrigger,
     LatestBlockOutput,
     RunResponse,
 )
@@ -26,7 +28,18 @@ _LIST_SQL = """
                 THEN (SELECT count(*) FROM jsonb_object_keys(p.definition->'blocks'))
                 ELSE 0 END::int AS block_count,
            lr.status AS last_run_status,
-           lr.created_at AS last_run_at
+           lr.created_at AS last_run_at,
+           COALESCE((
+               SELECT replace(b.value->>'type', '_trigger', '')
+               FROM jsonb_each(CASE WHEN jsonb_typeof(p.definition->'blocks') = 'object'
+                                    THEN p.definition->'blocks' ELSE '{}'::jsonb END) b
+               WHERE b.value->>'type' IN ('manual_trigger', 'schedule_trigger', 'webhook_trigger')
+               LIMIT 1
+           ), 'manual') AS trigger_type,
+           CASE WHEN p.is_active THEN (
+               SELECT min(t.next_run_at) FROM pipeline_triggers t
+               WHERE t.pipeline_id = p.id AND t.type = 'schedule'
+           ) END AS next_run_at
     FROM pipelines p
     LEFT JOIN LATERAL (
         SELECT r.status, r.created_at
@@ -42,7 +55,9 @@ def _parse_jsonb(v) -> dict:
     return json.loads(v) if isinstance(v, str) else (v or {})
 
 
-def _row_to_pipeline_response(row: dict) -> PipelineResponse:
+async def _pipeline_response(conn, row) -> PipelineResponse:
+    row = dict(row)
+    triggers = (await list_triggers(conn, [row["id"]])).get(str(row["id"]), [])
     return PipelineResponse(
         id=row["id"],
         name=row["name"],
@@ -51,6 +66,8 @@ def _row_to_pipeline_response(row: dict) -> PipelineResponse:
         is_template=row["is_template"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        triggers=[PipelineTrigger(**t) for t in triggers],
+        resume_links=await list_wait_links(conn, row["id"]),
     )
 
 
@@ -76,6 +93,8 @@ def _row_to_run_response(row: dict) -> RunResponse:
         blocks_remaining=row["blocks_remaining"],
         error_summary=error_summary,
         input_data=input_data,
+        trigger_type=row.get("trigger_type") or "manual",
+        trigger_payload=_parse_jsonb(row["trigger_payload"]) if row.get("trigger_payload") else None,
         created_at=row["created_at"],
         started_at=row.get("started_at"),
         finished_at=row.get("finished_at"),
@@ -128,8 +147,8 @@ async def create_pipeline(body: CreatePipelineRequest) -> PipelineResponse:
                 body.name,
                 json.dumps(body.definition),
             )
-        d = dict(row)
-        return _row_to_pipeline_response(d)
+            await sync_triggers(conn, row["id"], body.definition)
+        return await _pipeline_response(conn, row)
     finally:
         await conn.close()
 
@@ -153,7 +172,7 @@ async def get_pipeline(pipeline_id: UUID) -> PipelineResponse:
         )
         if row is None:
             raise NotFoundError(f"Pipeline {pipeline_id} not found")
-        return _row_to_pipeline_response(dict(row))
+        return await _pipeline_response(conn, row)
     finally:
         await conn.close()
 
@@ -190,10 +209,12 @@ async def update_pipeline(
 
         async with conn.transaction():
             row = await conn.fetchrow(sql, *params)
+            if row is not None and body.definition is not None:
+                await sync_triggers(conn, pipeline_id, body.definition)
 
         if row is None:
             raise NotFoundError(f"Pipeline {pipeline_id} not found")
-        return _row_to_pipeline_response(dict(row))
+        return await _pipeline_response(conn, row)
     finally:
         await conn.close()
 
@@ -201,15 +222,13 @@ async def update_pipeline(
 @router.patch("/{pipeline_id}", response_model=PipelineListItem)
 async def patch_pipeline(pipeline_id: UUID, body: PatchPipelineRequest) -> PipelineListItem:
     # is_active only gates automatic triggers; it is a setting, not an
-    # edit, so it does not bump updated_at.
+    # edit, so it does not bump updated_at. Switching on recomputes
+    # schedules from now, so there's no burst of missed runs.
     conn = await get_connection()
     try:
-        updated = await conn.fetchval(
-            "UPDATE pipelines SET is_active = $1 WHERE id = $2 RETURNING id",
-            body.is_active,
-            pipeline_id,
-        )
-        if updated is None:
+        async with conn.transaction():
+            was = await set_pipeline_active(conn, pipeline_id, body.is_active)
+        if was is None:
             raise NotFoundError(f"Pipeline {pipeline_id} not found")
         row = await conn.fetchrow(_LIST_SQL + " WHERE p.id = $1", pipeline_id)
         return _row_to_list_item(row)

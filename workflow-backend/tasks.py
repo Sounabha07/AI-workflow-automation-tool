@@ -4,6 +4,7 @@ import time
 
 import blocks  # noqa: F401 -- importing this registers every block
 import engine
+import engine.triggers
 from blocks.base import FatalError, RetryableError
 from blocks.registry import get_block_class
 from celery_app import celery_app
@@ -32,11 +33,6 @@ def _save_result(handler, *args) -> None:
     asyncio.run(handler(*args))
 
 
-@celery_app.task
-def sweep_stuck_blocks() -> None:
-    asyncio.run(engine.sweep_stuck_blocks())
-
-
 @celery_app.task(bind=True, max_retries=None)  # per-block max_retries enforced manually
 def execute_block_task(self, run_id: str, block_id: str) -> None:
     attempts = self.request.retries + 1
@@ -48,9 +44,14 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
         context = asyncio.run(engine.get_block_context(run_id, block_id))
         block_cls = get_block_class(context["block_type"])
         block = block_cls()
-        asyncio.run(engine.mark_running(
+        if not asyncio.run(engine.mark_running(
             run_id, block_id, context["config"], getattr(block_cls, "schema", {})
-        ))
+        )):
+            return  # already waiting or finished: a redelivered task
+    except engine.RunVanishedError:
+        # Deleted between the claim and here: nothing left to run.
+        logger.info("Run %s was deleted; skipping block %s", run_id, block_id)
+        return
     except ValueError as e:
         # An unresolvable {{ }} reference or unusable credential won't fix
         # itself on retry.
@@ -76,7 +77,9 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
     config["block_id"] = block_id
 
     try:
-        output = asyncio.run(block.execute(config, input_data={}, credentials=context["credentials"]))
+        output = asyncio.run(block.execute(
+            config, input_data=context["input_data"], credentials=context["credentials"]
+        ))
     except RetryableError as e:
         if self.request.retries >= block_cls.max_retries:
             _save_result(engine.handle_block_failure, run_id, block_id, str(e), True, attempts)
@@ -99,4 +102,26 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
         _save_result(engine.handle_block_failure, run_id, block_id, f"Unexpected error: {e}", False, attempts)
         return
     else:
-        _save_result(engine.handle_block_success, run_id, block_id, output)
+        if getattr(block_cls, "waits_for_input", False):
+            # Park it and return: no sleeping, no worker slot held.
+            _save_result(engine.mark_waiting, run_id, block_id, output["timeout_seconds"])
+        else:
+            _save_result(engine.handle_block_success, run_id, block_id, output)
+
+
+# Periodic tasks, scheduled by the beat service (see celery_app.beat_schedule).
+# All are safe to run concurrently from several processes.
+
+@celery_app.task(ignore_result=True)
+def sweep_wait_timeouts() -> int:
+    return asyncio.run(engine.sweep_wait_timeouts())
+
+
+@celery_app.task(ignore_result=True)
+def fire_due_schedules() -> list[str]:
+    return asyncio.run(engine.triggers.fire_due_schedules())
+
+
+@celery_app.task(ignore_result=True)
+def sweep_stuck_blocks() -> None:
+    asyncio.run(engine.sweep_stuck_blocks())

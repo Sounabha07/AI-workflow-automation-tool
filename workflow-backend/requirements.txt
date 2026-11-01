@@ -8,4 +8,6 @@ uvicorn==0.30.6
 pydantic==2.9.2
 pydantic-settings==2.5.2
 websockets==13.1
+croniter==6.2.4
+tzdata==2026.5
 cryptography==46.0.5

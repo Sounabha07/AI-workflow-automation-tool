@@ -199,6 +199,74 @@ async def drill_abandoned() -> None:
     check("the old block did not run", "/old" not in hits, hits.get("/old"))
 
 
+async def wait_for_status(run_id: str, block_id: str, status: str, timeout: float = 30) -> str:
+    deadline = time.time() + timeout
+    current = None
+    while time.time() < deadline:
+        current = (await fetch_blocks(run_id))[block_id]["status"]
+        if current == status:
+            break
+        await asyncio.sleep(0.5)
+    return current
+
+
+async def new_pipeline(name: str, definition: dict) -> str:
+    conn = await get_connection()
+    try:
+        return str(await conn.fetchval(
+            "INSERT INTO pipelines (name, definition) VALUES ($1, $2) RETURNING id",
+            f"recovery_drill_{name}",
+            json.dumps(definition),
+        ))
+    finally:
+        await conn.close()
+
+
+async def drill_wait_blocks() -> None:
+    print("\n5. Wait blocks: repeated deliveries and resumes count once")
+    definition = {"blocks": {
+        "t": blk("manual_trigger", ["w"], []),
+        "w": blk("wait_for_input", ["after"], ["t"], {"timeout_seconds": 300}),
+        "after": blk("manual_trigger", [], ["w"]),
+    }}
+    run = await engine.start_run(await new_pipeline("wait", definition))
+    status = await wait_for_status(run.run_id, "w", "waiting")
+    check("the block parks as waiting", status == "waiting", status)
+
+    execute_block_task.delay(run.run_id, "w")
+    await asyncio.sleep(3)
+    blocks = await fetch_blocks(run.run_id)
+    check("a repeated delivery leaves it waiting", blocks["w"]["status"] == "waiting", blocks["w"]["status"])
+    check("the trigger block's ready_at was set", blocks["t"]["ready_at"] is not None)
+
+    token = blocks["w"]["resume_token"]
+    first = await engine.resume_waiting_block(token, {"ok": True})
+    second = await engine.resume_waiting_block(token, {"ok": False})
+    check("the first resume wins", first.outcome == "resumed", first.outcome)
+    check("the second resume is refused", second.outcome == "already_resumed", second.outcome)
+    status = await wait_finished(run.run_id)
+    check("the run completes", status == "succeeded", status)
+    finished = await fetch_run(run.run_id)
+    check("the run counter is exactly zero", finished["blocks_remaining"] == 0, finished["blocks_remaining"])
+
+    print("\n6. A cancelled wait block can't finish later")
+    definition = {"blocks": {
+        "t": blk("manual_trigger", ["w", "x"], []),
+        "w": blk("wait_for_input", [], ["t"], {"timeout_seconds": 300}),
+        "x": blk("manual_trigger", [], ["t"]),
+    }}
+    run_id = await seed_run("cancelled", definition, {"w": "waiting", "x": "running"})
+    await engine.handle_block_failure(run_id, "x", "boom", False, 1)
+    blocks = await fetch_blocks(run_id)
+    check("failing the run cancels the waiting block", blocks["w"]["status"] == "cancelled", blocks["w"]["status"])
+    remaining = (await fetch_run(run_id))["blocks_remaining"]
+    await engine.handle_block_success(run_id, "w", {"late": True})
+    blocks = await fetch_blocks(run_id)
+    check("a late success is ignored", blocks["w"]["status"] == "cancelled", blocks["w"]["status"])
+    after = (await fetch_run(run_id))["blocks_remaining"]
+    check("the counter didn't move", after == remaining, f"{remaining} -> {after}")
+
+
 def worker_children() -> list[int]:
     """Celery's pool processes: celery processes whose parent is also celery."""
     me = os.getpid()
@@ -218,7 +286,7 @@ def worker_children() -> list[int]:
 
 
 async def drill_worker_killed() -> None:
-    print("\n5. A worker killed in the middle of a block gets its task back")
+    print("\n7. A worker killed in the middle of a block gets its task back")
     definition = {"blocks": {
         "a": http_blk(["b"], [], "killed"),
         "b": blk("manual_trigger", [], ["a"]),
@@ -251,6 +319,7 @@ async def main() -> int:
         await drill_sweeper_requeues()
         await drill_duplicate_delivery()
         await drill_abandoned()
+        await drill_wait_blocks()
         await drill_worker_killed()
     finally:
         server.shutdown()

@@ -5,9 +5,12 @@ from fastapi.responses import JSONResponse
 import asyncpg
 
 from db import apply_schema, close_db, get_connection
+from engine.triggers import backfill_wait_links
 from app.api.routes_pipelines import router as pipelines_router
 from app.api.routes_runs import router as runs_router
 from app.api.routes_resume import router as resume_router
+from app.api.routes_hooks import router as hooks_router
+from app.api.routes_schedule import router as schedule_router
 from app.api.routes_blocks import router as blocks_router
 from app.api.routes_credentials import router as credentials_router
 from app.api.routes_ws import router as ws_router
@@ -18,6 +21,7 @@ from app.validation import InvalidWorkflowError
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await apply_schema()
+    await backfill_wait_links()
     yield
     await close_db()
 
@@ -35,6 +39,8 @@ app.include_router(pipelines_router, prefix="/pipelines",
                    tags=["pipelines"])
 app.include_router(runs_router, prefix="/runs", tags=["runs"])
 app.include_router(resume_router, prefix="/resume", tags=["resume"])
+app.include_router(hooks_router, prefix="/hooks", tags=["hooks"])
+app.include_router(schedule_router, prefix="/schedule", tags=["schedule"])
 app.include_router(blocks_router, prefix="/blocks", tags=["blocks"])
 app.include_router(credentials_router, prefix="/credentials", tags=["credentials"])
 app.include_router(ws_router, tags=["ws"])

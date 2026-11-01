@@ -8,7 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { blockVisual, COLOR_BG_CLASS, type BlockVisual } from "@/lib/blockVisuals";
 import { switchOutputs } from "@/lib/nodeSubtitle";
+import { RESUME_NAMESPACE } from "@/lib/expressions";
 import { FieldRenderer } from "./fields/FieldRenderer";
+import { SchedulePanel, WaitPanel, WebhookPanel } from "./TriggerPanels";
 import { useEditorStore } from "@/store/editor";
 import type { FlowNode } from "@/lib/definition";
 import { cn } from "@/lib/utils";
@@ -75,6 +77,10 @@ export function ParametersPane({
       setIdError("Use lowercase letters, numbers and underscores, starting with a letter.");
       return;
     }
+    if (trimmed === RESUME_NAMESPACE) {
+      setIdError("'resume' is reserved for wait blocks' resume links.");
+      return;
+    }
     if (nodes.some((n) => n.id === trimmed)) {
       setIdError("A block with this id already exists.");
       return;
@@ -95,9 +101,23 @@ export function ParametersPane({
     );
   }
 
+  const blockType = node.data.blockType;
+  // The schedule's cron (a per-field table) and timezone (a select) are
+  // rendered by SchedulePanel instead of the generic fields.
+  const fields = (schema?.fields ?? []).filter(
+    (f) => !(blockType === "schedule_trigger" && (f.name === "cron" || f.name === "timezone"))
+  );
+
   return (
     <>
-      <Header node={node} Icon={Icon} color={visual.color} onTestStep={onTestStep} testing={testing} />
+      <Header
+        node={node}
+        Icon={Icon}
+        color={visual.color}
+        onTestStep={onTestStep}
+        testing={testing}
+        hideTest={visual.isTrigger}
+      />
       <Tabs defaultValue="params" className="flex min-h-0 flex-1 flex-col">
         <div className="border-b border-line px-4">
           <TabsList>
@@ -106,9 +126,20 @@ export function ParametersPane({
           </TabsList>
         </div>
         <TabsContent value="params" className="min-h-0 flex-1 overflow-auto p-4">
-          {(schema?.fields ?? []).map((f) => (
+          {blockType === "webhook_trigger" && <WebhookPanel blockId={node.id} />}
+          {fields.map((f) => (
             <FieldRenderer key={f.name} field={f} config={effectiveConfig} outputs={outputs} onChange={handleFieldChange} />
           ))}
+          {blockType === "schedule_trigger" && (
+            <SchedulePanel
+              key={node.id}
+              cron={String(effectiveConfig.cron ?? "")}
+              timezone={String(effectiveConfig.timezone || "UTC")}
+              onCronChange={(cron) => handleFieldChange("cron", cron)}
+              onTimezoneChange={(tz) => handleFieldChange("timezone", tz)}
+            />
+          )}
+          {blockType === "wait_for_input" && <WaitPanel blockId={node.id} />}
           {(schema?.fields ?? []).length === 0 && (
             <p className="text-[13px] text-ink-3">This block has no parameters.</p>
           )}

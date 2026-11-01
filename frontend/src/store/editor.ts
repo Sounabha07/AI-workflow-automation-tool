@@ -12,6 +12,9 @@ export interface BlockRuntimeState {
   retryCount: number;
   startedAt?: string | null;
   finishedAt?: string | null;
+  /** Wait for Input blocks: where to POST to resume, and when it times out. */
+  resumeUrl?: string | null;
+  waitDeadline?: string | null;
 }
 
 export type EditorMode = "edit" | "run";
@@ -145,14 +148,17 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   applyBlockStatusEvent: (event) =>
     set((s) => {
       if (event.run_id !== s.activeRunId) return s;
+      const prev = s.blockStates[event.block_id];
       return {
         blockStates: {
           ...s.blockStates,
           [event.block_id]: {
             status: event.status,
-            output: s.blockStates[event.block_id]?.output ?? null,
+            output: prev?.output ?? null,
             error: event.error,
             retryCount: event.retry_count,
+            resumeUrl: event.resume_url ?? prev?.resumeUrl,
+            waitDeadline: event.wait_deadline ?? prev?.waitDeadline,
           },
         },
       };

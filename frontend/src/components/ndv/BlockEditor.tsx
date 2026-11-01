@@ -11,6 +11,8 @@ export interface BlockOutputInfo extends BlockDataEntry {
   error: import("@/api/types").BlockError | null;
   startedAt?: string | null;
   finishedAt?: string | null;
+  resumeUrl?: string | null;
+  waitDeadline?: string | null;
 }
 
 export function BlockEditor({
@@ -86,6 +88,8 @@ export function BlockEditor({
             error={current?.error ?? null}
             durationMs={durationMs}
             stoppedAtBlockId={stoppedAtBlockId}
+            resumeUrl={current?.resumeUrl}
+            waitDeadline={current?.waitDeadline}
             mode={outMode}
             onModeChange={setOutMode}
           />

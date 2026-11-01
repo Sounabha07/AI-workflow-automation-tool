@@ -12,6 +12,7 @@ import { ContextMenu } from "@/components/ui/context-menu";
 import { DeleteWorkflowDialog } from "@/components/workflows/DeleteWorkflowDialog";
 import type { PipelineListItem } from "@/api/types";
 import { RelativeTime } from "@/components/RelativeTime";
+import { TriggerBadge } from "@/components/TriggerBadge";
 import { useRunEvents } from "@/hooks/useRunEvents";
 import { useSetPipelineActive } from "@/hooks/useSetPipelineActive";
 import { cn } from "@/lib/utils";
@@ -157,8 +158,19 @@ export function WorkflowsPage() {
             className="grid cursor-pointer grid-cols-[minmax(0,2.2fr)_130px_1.4fr_1fr_24px] items-center gap-2 border-t border-line px-4 py-3 text-[13px] hover:bg-panel"
           >
             <div>
-              <div className="font-semibold">{p.name}</div>
-              <div className="mt-0.5 text-xs text-ink-3">{p.block_count} blocks</div>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-semibold">{p.name}</span>
+                <TriggerBadge type={p.trigger_type} />
+              </div>
+              <div className="mt-0.5 text-xs text-ink-3">
+                {p.block_count} blocks
+                {p.next_run_at && (
+                  <>
+                    {" · next run "}
+                    <RelativeTime iso={p.next_run_at} />
+                  </>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-ink-2" onClick={(e) => e.stopPropagation()}>
               <Switch

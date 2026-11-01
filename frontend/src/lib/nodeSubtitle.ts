@@ -35,6 +35,22 @@ export function nodeSubtitle(data: BlockNodeData): string {
     return `${count} output${count === 1 ? "" : "s"}`;
   }
 
+  if (blockType === "schedule_trigger") {
+    const cron = typeof config.cron === "string" ? config.cron.trim() : "";
+    if (!cron) return "Not configured";
+    return `${cron} (${typeof config.timezone === "string" && config.timezone ? config.timezone : "UTC"})`;
+  }
+
+  if (blockType === "webhook_trigger") {
+    return config.secret ? "POST, signed" : "POST";
+  }
+
+  if (blockType === "wait_for_input") {
+    const seconds = Number(config.timeout_seconds);
+    if (!Number.isFinite(seconds) || seconds <= 0) return "Not configured";
+    return `Up to ${formatSeconds(seconds)}`;
+  }
+
   if (blockType === "input_block") {
     const fields = Array.isArray(config.fields) ? (config.fields as FieldDef[]) : [];
     if (fields.length === 0) return "Not configured";
@@ -49,6 +65,13 @@ export function nodeSubtitle(data: BlockNodeData): string {
   }
 
   return "";
+}
+
+function formatSeconds(s: number): string {
+  if (s % 86400 === 0) return `${s / 86400} d`;
+  if (s % 3600 === 0) return `${s / 3600} h`;
+  if (s % 60 === 0) return `${s / 60} min`;
+  return `${s} s`;
 }
 
 export function switchOutputs(config: Record<string, unknown>): string[] {

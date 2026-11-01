@@ -8,7 +8,8 @@ export const STATUS_LABEL: Record<NodeRuntimeStatus, string> = {
   succeeded: "Succeeded",
   failed: "Failed",
   skipped: "Skipped",
-  waiting: "Waiting",
+  waiting: "Waiting for input",
+  cancelled: "Cancelled",
   not_run: "Not run",
 };
 
@@ -20,6 +21,7 @@ export const STATUS_DOT_CLASS: Record<NodeRuntimeStatus, string> = {
   succeeded: "bg-ok",
   failed: "bg-err",
   skipped: "bg-[#9AA4B2]",
-  waiting: "bg-line-2",
+  waiting: "bg-run",
+  cancelled: "bg-[#9AA4B2]",
   not_run: "bg-line-2",
 };

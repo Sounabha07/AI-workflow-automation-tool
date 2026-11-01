@@ -18,4 +18,6 @@ class ManualTriggerBlock(BaseBlock):
         input_data: dict[str, Any],
         credentials: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        return {}
+        # input_data is the run's trigger_payload: empty for a plain manual
+        # run, or the sample payload a run was started with.
+        return dict(input_data or {})

@@ -17,11 +17,22 @@ celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
+    # Run by the beat service (docker-compose `beat`), executed by workers.
+    # A tick that sat in the queue past the next one is dropped, not run late.
     beat_schedule={
+        "sweep-wait-timeouts": {
+            "task": "tasks.sweep_wait_timeouts",
+            "schedule": 15.0,
+            "options": {"expires": 14},
+        },
+        "fire-due-schedules": {
+            "task": "tasks.fire_due_schedules",
+            "schedule": 15.0,
+            "options": {"expires": 14},
+        },
         "sweep-stuck-blocks": {
             "task": "tasks.sweep_stuck_blocks",
             "schedule": 60.0,
-            # A sweep nobody picked up is replaced by the next one.
             "options": {"expires": 60},
         },
     },
