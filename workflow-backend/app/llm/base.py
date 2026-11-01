@@ -94,6 +94,8 @@ class LLMProvider(Protocol):
     # Environment variable the block falls back to when no api_key is configured.
     env_var: str
     default_model: str
+    # Choices for the block's model dropdown: {"label", "value"}.
+    models: list[dict[str, str]]
     # Credential type (app/credentials.py) whose secrets this provider accepts.
     credential_type: str
     credential_label: str

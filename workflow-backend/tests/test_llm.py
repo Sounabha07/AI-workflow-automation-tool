@@ -221,6 +221,43 @@ async def test_invalid_key_reported_as_rejected_key():
         await blk.execute(cfg(), {}, CREDS)
 
 
+async def test_model_not_on_plan_is_fatal_not_retried():
+    body = {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": (
+        "Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: gemini-4-argon")}}
+    blk, _ = make(err(429, body))
+    with pytest.raises(FatalError, match="plan doesn't include this model"):
+        await blk.execute(cfg(model="gemini-4-argon"), {}, CREDS)
+
+
+@pytest.mark.parametrize("message", ["Quota exceeded, limit: 15", "Quota exceeded, limit: 0.5", "Slow down"])
+async def test_ordinary_quota_errors_stay_retryable(message):
+    blk, _ = make(err(429, {"error": {"code": 429, "message": message}}))
+    with pytest.raises(RetryableError, match="rate limited"):
+        await blk.execute(cfg(), {}, CREDS)
+
+
+@pytest.mark.parametrize("error", [
+    {"code": 400, "status": "FAILED_PRECONDITION", "message": "billing"},
+    {"code": "failed_precondition", "message": "billing"},
+])
+async def test_failed_precondition_points_at_billing(error):
+    blk, _ = make(err(400, {"error": error}))
+    with pytest.raises(FatalError, match="usually billing"):
+        await blk.execute(cfg(), {}, CREDS)
+
+
+async def test_depleted_credits_is_fatal():
+    blk, _ = make(err(402))
+    with pytest.raises(FatalError, match="out of prepaid credits"):
+        await blk.execute(cfg(), {}, CREDS)
+
+
+async def test_error_field_that_is_not_an_object_is_still_classified():
+    blk, _ = make(err(403, {"error": "denied"}))
+    with pytest.raises(FatalError, match="isn't allowed"):
+        await blk.execute(cfg(), {}, CREDS)
+
+
 async def test_prompt_blocked_is_fatal():
     resp = {"promptFeedback": {"blockReason": "SAFETY"}, "candidates": []}
     blk, _ = make(TransportResponse(200, {}, json.dumps(resp).encode()))
@@ -290,6 +327,18 @@ def test_schema_has_a_credential_picker_and_no_key_field():
     assert "api_key" not in fields
     assert fields["credential"]["type"] == "credential"
     assert fields["credential"]["credential_types"] == ["gemini_api_key"]
+
+
+def test_schema_model_is_a_dropdown_including_the_default():
+    model = next(f for f in LLMBlock.schema["fields"] if f["name"] == "model")
+    assert model["type"] == "options"
+    assert model["default"] in [o["value"] for o in model["options"]]
+
+
+async def test_a_saved_model_outside_the_dropdown_still_runs():
+    blk, t = make(ok())
+    await blk.execute(cfg(model="gemini-2.5-flash"), {}, CREDS)
+    assert "/models/gemini-2.5-flash:generateContent" in t.calls[0]["url"]
 
 
 # ── validation ─────────────────────────────────────────────────────── #

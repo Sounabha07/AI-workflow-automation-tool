@@ -10,7 +10,8 @@ Downstream blocks reference {{ llm_1.text }} or {{ llm_1.json.some_field }}.
 Error classification (block decides, per project design):
 - 429, 5xx, timeouts, connection errors: RetryableError (Retry-After honored)
 - json mode and the answer isn't valid JSON: RetryableError
-- other 4xx, missing key, blocked prompt/answer, no candidates: FatalError
+- other 4xx, a 429 for a model the key's plan doesn't include, missing key,
+  blocked prompt/answer, no candidates: FatalError
 - finishReason MAX_TOKENS is a success, surfaced in finish_reason
 """
 
@@ -37,6 +38,11 @@ RESPONSE_FORMATS = ("text", "json")
 _DEFAULT_MODEL = PROVIDERS[DEFAULT_PROVIDER].default_model
 _DEFAULT_ENV_VAR = PROVIDERS[DEFAULT_PROVIDER].env_var
 TEMPERATURE_RANGE = (0.0, 2.0)
+REASON_HINTS = {
+    "invalid_api_key": "the API key was rejected",
+    "billing_required": "the API key's project doesn't meet a requirement, usually billing; check its plan",
+    "model_not_on_plan": "your plan doesn't include this model; choose another model or enable billing",
+}
 
 LLM_BLOCK_SCHEMA = {
     "name": "LLM",
@@ -55,11 +61,10 @@ LLM_BLOCK_SCHEMA = {
         {
             "name": "model",
             "label": "Model",
-            "type": "string",
+            "type": "options",
             "required": True,
             "default": _DEFAULT_MODEL,
-            "placeholder": _DEFAULT_MODEL,
-            "description": "Any model name the provider accepts.",
+            "options": PROVIDERS[DEFAULT_PROVIDER].models,
         },
         {
             "name": "prompt",
@@ -271,19 +276,17 @@ class LLMBlock(BaseBlock):
         where = f"LLM block ({provider}, model '{model}')"
         if isinstance(e, ProviderHTTPError):
             s = e.status
-            if s == 429:
+            if s == 429 and e.reason != "model_not_on_plan":
                 return RetryableError(f"{where}: rate limited (429). Body: {e.body}", e.retry_after_seconds)
             if s >= 500:
                 return RetryableError(f"{where}: server error ({s}). Body: {e.body}", e.retry_after_seconds)
-            if e.reason == "invalid_api_key":
-                hint = "the API key was rejected"
-            else:
-                hint = {
-                    400: "bad request; check the prompt, settings and json_schema",
-                    401: "the API key was rejected",
-                    403: "the API key isn't allowed to use this model or API",
-                    404: "model not found; check the model name",
-                }.get(s, "client error")
+            hint = REASON_HINTS.get(e.reason) or {
+                400: "bad request; check the prompt, settings and json_schema",
+                401: "the API key was rejected",
+                402: "the account is out of prepaid credits",
+                403: "the API key isn't allowed to use this model or API; check its plan and billing",
+                404: "model not found; check the model name",
+            }.get(s, "client error")
             return FatalError(f"{where}: {hint} ({s}). This won't succeed on retry. Body: {e.body}")
         if isinstance(e, ProviderTimeout):
             return RetryableError(f"{where}: {e}")

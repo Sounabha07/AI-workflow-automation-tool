@@ -35,12 +35,23 @@ BLOCKED_FINISH_REASONS = {
 
 _DURATION = re.compile(r"^\s*(\d+(?:\.\d+)?)s\s*$")
 
+# A 429 saying "limit: 0" means the key's plan has no quota for this model at
+# all, so waiting won't help. "limit: 15" is an ordinary rate limit.
+_ZERO_QUOTA = re.compile(r"\blimit:\s*0(?![\d.])")
+
 
 class GeminiProvider:
     env_var = "GEMINI_API_KEY"
-    # A current fast, stable model (Gemini API docs, Oct 2026). Free text in the
-    # block, so newer names work without a code change.
+    # A current fast, stable model (Gemini API docs, Nov 2026).
     default_model = "gemini-3.8-flash"
+    # Stable text models, default first (Gemini API models and pricing docs, Nov 2026).
+    models = [
+        {"label": "Gemini 3.8 Flash", "value": "gemini-3.8-flash"},
+        {"label": "Gemini 3.6 Flash", "value": "gemini-3.6-flash"},
+        {"label": "Gemini 3.5 Flash-Lite", "value": "gemini-3.5-flash-lite"},
+        {"label": "Gemini 3.1 Flash-Lite", "value": "gemini-3.1-flash-lite"},
+        {"label": "Gemini 4 Argon (paid plan only)", "value": "gemini-4-argon"},
+    ]
     credential_type = "gemini_api_key"
     credential_label = "Gemini API key"
 
@@ -90,7 +101,7 @@ class GeminiProvider:
             if retry_after is None:
                 retry_after = _retry_delay_from_body(err_json)
             raise ProviderHTTPError(
-                resp.status, truncate_body(text, req.api_key), retry_after, _error_reason(err_json)
+                resp.status, truncate_body(text, req.api_key), retry_after, _error_reason(err_json, resp.status)
             )
 
         data = loads_or_none(resp.body)
@@ -151,16 +162,29 @@ def _retry_delay_from_body(data) -> float | None:
     return None
 
 
+def _error_object(data) -> dict:
+    error = data.get("error") if isinstance(data, dict) else None
+    return error if isinstance(error, dict) else {}
+
+
 def _error_details(data) -> list:
-    if not isinstance(data, dict):
-        return []
-    details = (data.get("error") or {}).get("details") or []
+    details = _error_object(data).get("details") or []
     return [d for d in details if isinstance(d, dict)] if isinstance(details, list) else []
 
 
-def _error_reason(data) -> str | None:
-    """Gemini reports a bad key as 400 with ErrorInfo reason API_KEY_INVALID."""
+def _error_reason(data, status: int) -> str | None:
+    """Gemini reports a bad key as 400 with ErrorInfo reason API_KEY_INVALID,
+    unmet billing prerequisites as 400 FAILED_PRECONDITION, and a model the
+    plan doesn't include as 429 with "limit: 0" in the message."""
     reasons = {d.get("reason") for d in _error_details(data)}
     if "API_KEY_INVALID" in reasons:
         return "invalid_api_key"
+
+    error = _error_object(data)
+    # "status" is the older error shape, "code" the current one.
+    codes = {str(error.get("status")).lower(), str(error.get("code")).lower()}
+    if "failed_precondition" in codes:
+        return "billing_required"
+    if status == 429 and _ZERO_QUOTA.search(str(error.get("message") or "")):
+        return "model_not_on_plan"
     return None
