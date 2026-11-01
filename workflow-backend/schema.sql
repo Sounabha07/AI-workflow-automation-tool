@@ -117,6 +117,11 @@ ALTER TABLE runs ADD COLUMN IF NOT EXISTS
 ALTER TABLE block_executions ADD COLUMN IF NOT EXISTS
     live_deps INT NOT NULL DEFAULT 0;
 
+-- When the block last became 'ready' or was queued, so the sweeper can spot
+-- one whose task never arrived. NULL on rows older than this column.
+ALTER TABLE block_executions ADD COLUMN IF NOT EXISTS
+    ready_at TIMESTAMPTZ NULL;
+
 CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs (created_at DESC);
 
 -- Deleting a pipeline deletes its whole run history: pipeline -> runs

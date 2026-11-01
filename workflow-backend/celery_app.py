@@ -17,6 +17,14 @@ celery_app.conf.update(
     task_serializer="json",
     result_serializer="json",
     accept_content=["json"],
+    beat_schedule={
+        "sweep-stuck-blocks": {
+            "task": "tasks.sweep_stuck_blocks",
+            "schedule": 60.0,
+            # A sweep nobody picked up is replaced by the next one.
+            "options": {"expires": 60},
+        },
+    },
 )
 
 # Worker is started with `-A tasks` so that circular import is not needed here.
