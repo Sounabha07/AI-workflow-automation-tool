@@ -64,7 +64,8 @@ def blk(type_, config, depends_on, next_):
 
 def definition(method: str, path: str) -> dict:
     tool = {
-        "method": method, "url": f"http://api:8000/_test/echo/{TAG}/{path}?delay_ms=10000",
+        # The tool runs in the worker, which reaches the API at the same base URL as this script.
+        "method": method, "url": f"{API}/_test/echo/{TAG}/{path}?delay_ms=10000",
         "authentication": "none", "timeout_seconds": 30,
         "tool_name": "slow_call", "tool_description": "A slow echo call used by the crash drill.",
         "tool_parameters": {"type": "object", "properties": {"n": {"type": "integer"}}},
