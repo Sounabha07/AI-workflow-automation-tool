@@ -109,3 +109,11 @@ def test_embedded_objects_are_compact_json_with_readable_unicode():
     state = {"a": {"obj": {"city": "Köln", "tags": ["x", None]}, "n": None}}
     assert resolve("Data: {{ a.obj }}", state) == 'Data: {"city": "Köln", "tags": ["x", null]}'
     assert resolve("n={{ a.n }}", state) == "n=null"
+
+
+def test_list_items_are_indexed_by_position():
+    state = {"h": {"data": {"items": [{"id": 7}, {"id": 8}]}}}
+    assert resolve("{{ h.data.items.1.id }}", state) == 8
+    assert resolve("first={{ h.data.items.0.id }}", state) == "first=7"
+    with pytest.raises(ValueError, match=r"0\.\.1"):
+        resolve("{{ h.data.items.2.id }}", state)
