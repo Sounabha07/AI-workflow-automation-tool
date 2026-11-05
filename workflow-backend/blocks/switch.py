@@ -16,7 +16,8 @@ FALLBACK = "fallback"
 
 def switch_outputs(config: dict[str, Any]) -> list[str]:
     """Output names a switch exposes: rule outputs, plus fallback if enabled."""
-    outputs = [str(r.get("output", "")) for r in config.get("rules") or [] if isinstance(r, dict)]
+    rules = config.get("rules")
+    outputs = [str(r.get("output", "")) for r in (rules if isinstance(rules, list) else []) if isinstance(r, dict)]
     if config.get("fallback", True):
         outputs.append(FALLBACK)
     return outputs

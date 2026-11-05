@@ -43,7 +43,8 @@ def _load(value: Any) -> Any:
 
 
 def agent_tool_ids(block_def: dict) -> list[str]:
-    tools = (block_def.get("config") or {}).get("tools")
+    config = block_def.get("config") if isinstance(block_def, dict) else None
+    tools = config.get("tools") if isinstance(config, dict) else None
     if not isinstance(tools, list):
         return []
     return [t for t in tools if isinstance(t, str)]
@@ -65,7 +66,7 @@ def tool_block_ids(definition: dict) -> set[str]:
 
 
 def tool_parameters(config: dict) -> Any:
-    params = _load(config.get("tool_parameters"))
+    params = _load(config.get("tool_parameters")) if isinstance(config, dict) else None
     return {"type": "object", "properties": {}} if params in (None, "", {}) else params
 
 

@@ -31,6 +31,13 @@ def edge_targets(block_def: dict) -> list[str]:
     return list(nxt) if isinstance(nxt, list) else []
 
 
+def config_of(block_def: Any) -> dict:
+    """A block's config, or {} when it's missing or not an object (that
+    case is reported once, by validate_definition)."""
+    config = block_def.get("config") if isinstance(block_def, dict) else None
+    return config if isinstance(config, dict) else {}
+
+
 def _strings(value: Any):
     """Every string nested anywhere in a config value."""
     if isinstance(value, str):
@@ -51,7 +58,7 @@ def _resume_ref_problems(block_defs: dict) -> list[str]:
     for block_id, b in block_defs.items():
         if not isinstance(b, dict):
             continue
-        for text in _strings(b.get("config") or {}):
+        for text in _strings(config_of(b)):
             for m in PLACEHOLDER.finditer(text):
                 segments = m.group(1).strip().split(".")
                 if segments[0] != RESUME_NAMESPACE:
@@ -82,7 +89,7 @@ def validate_definition(definition: Any) -> list[str]:
     malformed: set[str] = set()
 
     for block_id, b in block_defs.items():
-        if not BLOCK_ID_PATTERN.match(block_id):
+        if not isinstance(block_id, str) or not BLOCK_ID_PATTERN.match(block_id):
             problems.append(
                 f"Block id '{block_id}' is invalid. Use lowercase letters, digits and "
                 f"underscores, starting with a letter (max 63 characters)."
@@ -95,8 +102,13 @@ def validate_definition(definition: Any) -> list[str]:
             continue
 
         block_type = b.get("type")
-        if block_type not in registered:
+        if not isinstance(block_type, str) or block_type not in registered:
             problems.append(f"Block '{block_id}' has unknown type '{block_type}'.")
+            block_type = None
+
+        if b.get("config") is not None and not isinstance(b.get("config"), dict):
+            problems.append(f"Block '{block_id}': 'config' must be an object.")
+        config = config_of(b)
 
         depends_on = b.get("depends_on", [])
         if not isinstance(depends_on, list):
@@ -111,10 +123,10 @@ def validate_definition(definition: Any) -> list[str]:
                 )
                 malformed.add(block_id)
             else:
-                config = b.get("config") or {}
+                rules = config.get("rules")
                 rule_outputs = [
                     str(r.get("output", "")).strip()
-                    for r in config.get("rules") or [] if isinstance(r, dict)
+                    for r in (rules if isinstance(rules, list) else []) if isinstance(r, dict)
                 ]
                 if any(not o for o in rule_outputs):
                     problems.append(f"Switch '{block_id}': every rule needs an output name.")
@@ -144,14 +156,13 @@ def validate_definition(definition: Any) -> list[str]:
             malformed.add(block_id)
 
         if block_type == "llm":
-            problems.extend(llm_config_problems(block_id, b.get("config") or {}))
+            problems.extend(llm_config_problems(block_id, config))
         if block_type == agent_tools.AGENT_TYPE:
-            problems.extend(agent_config_problems(block_id, b.get("config") or {}))
+            problems.extend(agent_config_problems(block_id, config))
 
         if block_type in TRIGGER_TYPES and depends_on:
             problems.append(f"Trigger '{block_id}' can't have incoming connections.")
 
-        config = b.get("config") or {}
         if block_type == "schedule_trigger":
             problem = schedule_problem(config.get("cron"), config.get("timezone") or DEFAULT_TIMEZONE)
             if problem:
@@ -451,10 +462,10 @@ def tool_wiring_problems(block_defs: dict) -> list[str]:
             )
         if tool_id in in_edges or tool_id in in_deps:
             problems.append(f"Tool '{tool_id}' can't be connected into the workflow: only its agent uses it.")
-        problems.extend(agent_tools.definition_problems(tool_id, tool.get("config") or {}))
+        problems.extend(agent_tools.definition_problems(tool_id, config_of(tool)))
 
         upstream = ancestors(definition, first)
-        for ref in sorted(_refs(tool.get("config"))):
+        for ref in sorted(_refs(config_of(tool))):
             if ref == tool_id or ref not in block_defs:
                 continue
             if ref not in upstream:
@@ -470,7 +481,7 @@ def tool_wiring_problems(block_defs: dict) -> list[str]:
         for tool_id in agent_tools.agent_tool_ids(b):
             tool = block_defs.get(tool_id)
             if isinstance(tool, dict):
-                name = str((tool.get("config") or {}).get("tool_name") or "").strip()
+                name = str(config_of(tool).get("tool_name") or "").strip()
                 if name:
                     names.setdefault(name, set()).add(tool_id)
         for name, ids in sorted(names.items()):
@@ -492,7 +503,7 @@ def definition_warnings(definition: Any) -> list[str]:
         tool = block_defs.get(tool_id)
         if not isinstance(tool, dict):
             continue
-        keys = agent_tools.unsupported_keywords(agent_tools.tool_parameters(tool.get("config") or {}))
+        keys = agent_tools.unsupported_keywords(agent_tools.tool_parameters(config_of(tool)))
         if keys:
             warnings.append(
                 f"Tool '{tool_id}': Gemini may ignore these JSON Schema keywords in its parameters: "
@@ -500,7 +511,7 @@ def definition_warnings(definition: Any) -> list[str]:
             )
     for block_id, b in block_defs.items():
         if isinstance(b, dict) and b.get("type") == agent_tools.AGENT_TYPE:
-            schema = _json_value((b.get("config") or {}).get("output_schema"))
+            schema = _json_value(config_of(b).get("output_schema"))
             keys = agent_tools.unsupported_keywords(schema) if isinstance(schema, dict) else []
             if keys:
                 warnings.append(
@@ -513,14 +524,20 @@ def definition_warnings(definition: Any) -> list[str]:
 def ancestors(definition: dict, block_id: str) -> set[str]:
     """Every block upstream of block_id, following depends_on."""
     block_defs = definition.get("blocks", {})
+
+    def deps(bid) -> list:
+        b = block_defs.get(bid)
+        d = b.get("depends_on", []) if isinstance(b, dict) else []
+        return [x for x in d if isinstance(x, str)] if isinstance(d, list) else []
+
     found: set[str] = set()
-    stack = list(block_defs.get(block_id, {}).get("depends_on", []))
+    stack = deps(block_id)
     while stack:
         a = stack.pop()
         if a in found or a not in block_defs:
             continue
         found.add(a)
-        stack.extend(block_defs[a].get("depends_on", []))
+        stack.extend(deps(a))
     return found
 
 
