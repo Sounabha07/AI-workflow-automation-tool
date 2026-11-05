@@ -346,7 +346,8 @@ class AgentRun:
             ))
             await self._emit(idx, "model", None, "failed")
             err = self.classify(e) if self.classify else RetryableError(str(e))
-            if isinstance(err, FatalError) and err.detail is None:
+            # A retryable error carries it too: it is saved if retries run out.
+            if getattr(err, "detail", None) is None:
                 err.detail = await self.failure_detail("error")
             raise err from None
 

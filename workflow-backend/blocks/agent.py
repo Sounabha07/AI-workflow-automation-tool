@@ -23,7 +23,7 @@ import json
 from typing import Any
 
 import events
-from app.agent.tools import side_effects, tool_spec
+from app.agent.tools import definition_problems, side_effects, tool_spec
 from app.llm import DEFAULT_PROVIDER, PROVIDER_LABELS, PROVIDERS
 from blocks.base import BaseBlock, FatalError
 from blocks.llm import LLMBlock, TEMPERATURE_RANGE, _number, resolve_api_key
@@ -180,6 +180,15 @@ class AgentBlock(BaseBlock):
         output_schema = _load_json(config.get("output_schema"), "output_schema") or None
         if output_schema is not None and not isinstance(output_schema, dict):
             raise FatalError("Agent block: 'output_schema' must be a JSON object.")
+        if output_schema is not None:
+            # Checked here too: an expression in the schema is only known now.
+            from jsonschema import Draft202012Validator
+            from jsonschema.exceptions import SchemaError
+
+            try:
+                Draft202012Validator.check_schema(output_schema)
+            except SchemaError as e:
+                raise FatalError(f"Agent block: 'output_schema' is not a valid JSON Schema: {e.message}") from None
         script = _load_json(config.get("script"), "script")
 
         return AgentSettings(
@@ -208,6 +217,11 @@ class AgentBlock(BaseBlock):
             tc = tool_configs.get(tool_id)
             if tc is None:
                 raise FatalError(f"Agent block: tool block '{tool_id}' isn't in this workflow.")
+            # Saved definitions were validated; this catches what an expression
+            # in the tool's config resolved to.
+            problems = definition_problems(tool_id, tc)
+            if problems:
+                raise FatalError("Agent block: " + " ".join(problems))
             tools.append(AgentTool(tool_id, tool_spec(tc), tc, side_effects(tc)))
         return tools
 

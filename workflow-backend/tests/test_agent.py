@@ -385,3 +385,20 @@ def test_scripted_provider_never_repeats_an_error_past_the_end():
                                 options={"script": [{"text": "a"}, {"error": 503}]})
     assert p.chat(req(5)).text == "a"
     assert ToolCall  # imported for the adapter tests
+
+
+def test_block_rejects_an_invalid_output_schema_and_tool_at_run_time():
+    from blocks.agent import AgentBlock
+
+    block = AgentBlock(providers={"scripted": ScriptedProvider()})
+    base = {"provider": "scripted", "task": "t"}
+    with pytest.raises(FatalError, match="not a valid JSON Schema"):
+        block.settings({**base, "output_schema": {"type": "nope"}}, None)
+    with pytest.raises(FatalError, match="parameters"):
+        block.agent_tools({"tools": ["t1"]}, {"t1": http_tool_cfg(params={"type": "array"})})
+
+
+async def test_exhausted_model_errors_keep_the_trace():
+    with pytest.raises(RetryableError) as e:
+        await make_run([{"tool_calls": [{"name": "get_items", "args": {}}]}, {"error": 503}]).run()
+    assert e.value.detail["stop_reason"] == "error" and len(e.value.detail["trace"]) == 3
