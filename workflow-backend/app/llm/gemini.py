@@ -11,6 +11,9 @@ import re
 import urllib.parse
 
 from app.llm.base import (
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
     ContentBlocked,
     EmptyResponse,
     LLMRequest,
@@ -18,6 +21,8 @@ from app.llm.base import (
     LLMUsage,
     MalformedResponse,
     ProviderHTTPError,
+    ToolCall,
+    ToolSpec,
     Transport,
     loads_or_none,
     parse_retry_after,
@@ -38,6 +43,10 @@ _DURATION = re.compile(r"^\s*(\d+(?:\.\d+)?)s\s*$")
 # A 429 saying "limit: 0" means the key's plan has no quota for this model at
 # all, so waiting won't help. "limit: 15" is an ordinary rate limit.
 _ZERO_QUOTA = re.compile(r"\blimit:\s*0(?![\d.])")
+
+# The model asked for a function in a way the API couldn't honor. There is
+# nothing to read in the answer; a fresh attempt usually works.
+MALFORMED_CALL_REASONS = {"MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL"}
 
 
 class GeminiProvider:
@@ -85,12 +94,108 @@ class GeminiProvider:
         return f"{self.base_url}/models/{urllib.parse.quote(model, safe='.-_')}:generateContent"
 
     def generate(self, req: LLMRequest) -> LLMResponse:
+        data = self._post(req.model, req.api_key, self.build_body(req), req.timeout_seconds)
+        return self.parse_response(data, req.model)
+
+    # ── tool calling ────────────────────────────────────────────────── #
+    # FunctionDeclaration / functionCall / functionResponse per
+    # https://ai.google.dev/api/caching. Model turns go back exactly as
+    # received, so opaque parts (thoughtSignature) survive multi-turn calls.
+
+    @staticmethod
+    def tool_declarations(tools: list[ToolSpec]) -> list[dict]:
+        if not tools:
+            return []
+        return [{
+            "functionDeclarations": [
+                {"name": t.name, "description": t.description, "parametersJsonSchema": t.parameters}
+                for t in tools
+            ]
+        }]
+
+    @staticmethod
+    def message_content(m: ChatMessage) -> dict:
+        if m.role == "user":
+            return {"role": "user", "parts": [{"text": m.text}]}
+        if m.role == "model":
+            if isinstance(m.raw, dict) and m.raw.get("parts"):
+                return {**m.raw, "role": "model"}
+            parts: list[dict] = [{"text": m.text}] if m.text else []
+            for c in m.tool_calls:
+                fc: dict = {"name": c.name, "args": c.args}
+                if c.provider_id:
+                    fc["id"] = c.provider_id
+                parts.append({"functionCall": fc})
+            return {"role": "model", "parts": parts}
+        if m.role == "tool":
+            parts = []
+            for r in m.tool_results:
+                fr: dict = {"name": r["name"], "response": r["response"]}
+                if r.get("provider_id"):
+                    fr["id"] = r["provider_id"]
+                parts.append({"functionResponse": fr})
+            return {"role": "user", "parts": parts}
+        raise ValueError(f"unknown message role {m.role}")
+
+    def build_chat_body(self, req: ChatRequest) -> dict:
+        body: dict = {"contents": [self.message_content(m) for m in req.messages]}
+        if req.system_prompt:
+            body["systemInstruction"] = {"parts": [{"text": req.system_prompt}]}
+        tools = self.tool_declarations(req.tools)
+        if tools:
+            body["tools"] = tools
+        if req.temperature is not None:
+            body["generationConfig"] = {"temperature": req.temperature}
+        return body
+
+    def chat(self, req: ChatRequest) -> ChatResponse:
+        data = self._post(req.model, req.api_key, self.build_chat_body(req), req.timeout_seconds)
+        return self.parse_chat_response(data, req.model)
+
+    @classmethod
+    def parse_chat_response(cls, data: dict, requested_model: str) -> ChatResponse:
+        cand = (data.get("candidates") or [{}])[0] if isinstance(data.get("candidates"), list) else {}
+        if isinstance(cand, dict) and cand.get("finishReason") in MALFORMED_CALL_REASONS:
+            raise MalformedResponse(
+                f"the model produced an unusable function call (finishReason={cand['finishReason']})"
+            )
+        # Same blocking checks and usage accounting as a plain generate call.
+        plain = cls.parse_response(data, requested_model)
+        content = cand.get("content") or {}
+        parts = [p for p in content.get("parts") or [] if isinstance(p, dict)]
+        calls: list[ToolCall] = []
+        for i, part in enumerate(parts):
+            fc = part.get("functionCall")
+            if not isinstance(fc, dict):
+                continue
+            args = fc.get("args")
+            provider_id = fc.get("id") if isinstance(fc.get("id"), str) and fc.get("id") else None
+            calls.append(ToolCall(
+                id=provider_id or f"call_{i}",
+                name=str(fc.get("name") or ""),
+                args=args if isinstance(args, dict) else {},
+                provider_id=provider_id,
+            ))
+        if not calls and not plain.text and plain.finish_reason != "max_tokens":
+            raise EmptyResponse("the model returned neither text nor a function call")
+        return ChatResponse(
+            text=plain.text,
+            tool_calls=calls,
+            raw={"role": "model", "parts": content.get("parts") or []},
+            finish_reason=plain.finish_reason,
+            usage=plain.usage,
+            model=plain.model,
+        )
+
+    # ── transport ───────────────────────────────────────────────────── #
+
+    def _post(self, model: str, api_key: str, body: dict, timeout: float) -> dict:
         headers = {
             "Content-Type": "application/json",
-            "x-goog-api-key": req.api_key,
+            "x-goog-api-key": api_key,
         }
-        payload = json.dumps(self.build_body(req)).encode("utf-8")
-        resp = self.transport(self.url_for(req.model), headers, payload, req.timeout_seconds)
+        payload = json.dumps(body).encode("utf-8")
+        resp = self.transport(self.url_for(model), headers, payload, timeout)
 
         if not 200 <= resp.status < 300:
             text = resp.body.decode("utf-8", errors="replace")
@@ -101,16 +206,16 @@ class GeminiProvider:
             if retry_after is None:
                 retry_after = _retry_delay_from_body(err_json)
             raise ProviderHTTPError(
-                resp.status, truncate_body(text, req.api_key), retry_after, _error_reason(err_json, resp.status)
+                resp.status, truncate_body(text, api_key), retry_after, _error_reason(err_json, resp.status)
             )
 
         data = loads_or_none(resp.body)
         if not isinstance(data, dict):
             raise MalformedResponse(
                 "response body is not a JSON object: "
-                + truncate_body(resp.body.decode("utf-8", errors="replace"), req.api_key)
+                + truncate_body(resp.body.decode("utf-8", errors="replace"), api_key)
             )
-        return self.parse_response(data, req.model)
+        return data
 
     # ── response ────────────────────────────────────────────────────── #
 

@@ -123,7 +123,7 @@ LLM_BLOCK_SCHEMA = {
             "name": "credential",
             "label": "Credential",
             "type": "credential",
-            "credential_types": [p.credential_type for p in PROVIDERS.values()],
+            "credential_types": [p.credential_type for p in PROVIDERS.values() if p.credential_type],
             "placeholder": f"None: use the server's {_DEFAULT_ENV_VAR}",
             "description": "Your own saved API key. With none selected, the server's key is used if one is set.",
         },
@@ -145,6 +145,29 @@ def _number(value: Any, name: str, *, integer: bool = False) -> float | int | No
             raise FatalError(f"LLM block: '{name}' must be a positive whole number, got {value!r}.")
         return int(n)
     return n
+
+
+def resolve_api_key(provider, provider_name: str, credentials: dict | None, who: str) -> str:
+    """A saved credential (decrypted by the engine, never in config) wins;
+    the server's environment variable is the operator fallback. Shared with
+    the agent block."""
+    if not getattr(provider, "needs_api_key", True):
+        return ""
+    if credentials:
+        if credentials.get("type") != provider.credential_type:
+            raise FatalError(
+                f"{who}: credential '{credentials.get('name')}' is a {credentials.get('type')}, "
+                f"but provider '{provider_name}' needs a {provider.credential_type}."
+            )
+        api_key = str(credentials.get("api_key") or "").strip()
+    else:
+        api_key = os.environ.get(provider.env_var, "").strip()
+    if not api_key:
+        raise FatalError(
+            f"{who}: no API key. Select a saved credential in the block, "
+            f"or set {provider.env_var} for the worker (workflow-backend/.env)."
+        )
+    return api_key
 
 
 @register_block("llm")
@@ -208,22 +231,7 @@ class LLMBlock(BaseBlock):
         if json_schema is not None and not isinstance(json_schema, dict):
             raise FatalError("LLM block: 'json_schema' must be a JSON object.")
 
-        # A saved credential (decrypted by the engine, never in config) wins;
-        # the server's environment variable is the operator fallback.
-        if credentials:
-            if credentials.get("type") != provider.credential_type:
-                raise FatalError(
-                    f"LLM block: credential '{credentials.get('name')}' is a {credentials.get('type')}, "
-                    f"but provider '{provider_name}' needs a {provider.credential_type}."
-                )
-            api_key = str(credentials.get("api_key") or "").strip()
-        else:
-            api_key = os.environ.get(provider.env_var, "").strip()
-        if not api_key:
-            raise FatalError(
-                f"LLM block: no API key. Select a saved credential in the block, "
-                f"or set {provider.env_var} for the worker (workflow-backend/.env)."
-            )
+        api_key = resolve_api_key(provider, provider_name, credentials, "LLM block")
 
         request = LLMRequest(
             model=model,

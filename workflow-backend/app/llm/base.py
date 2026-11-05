@@ -50,6 +50,72 @@ class LLMResponse:
     model: str | None = None
 
 
+# ── Tool calling (the agent block) ──────────────────────────────────── #
+
+@dataclass
+class ToolSpec:
+    """A function the model may call. `parameters` is a JSON Schema object."""
+    name: str
+    description: str
+    parameters: dict
+
+
+@dataclass
+class ToolCall:
+    # Our id for the call: the provider's when it gives one, else assigned
+    # by the adapter, stable for a given response.
+    id: str
+    name: str
+    args: dict
+    # The provider's own id, echoed back in the function response (or None).
+    provider_id: str | None = None
+
+
+@dataclass
+class ChatMessage:
+    """One transcript entry, provider-neutral.
+
+    role "user": `text`.
+    role "model": `raw` is the provider's own content for that turn, kept
+        verbatim (opaque parts such as thought signatures must go back
+        unchanged); `text` and `tool_calls` are the parsed view.
+    role "tool": `tool_results`, one per call of the preceding model turn:
+        {"id", "provider_id", "name", "response": dict}.
+    """
+    role: str
+    text: str = ""
+    raw: Any = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    tool_results: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class ChatRequest:
+    model: str
+    api_key: str
+    messages: list[ChatMessage]
+    tools: list[ToolSpec]
+    system_prompt: str | None = None
+    temperature: float | None = None
+    timeout_seconds: float = 60
+    # How many model calls this agent made before this one, failed ones
+    # included. Only the scripted test provider reads it.
+    call_index: int = 0
+    # Provider-specific extras from the block config (the scripted provider's script).
+    options: dict = field(default_factory=dict)
+
+
+@dataclass
+class ChatResponse:
+    text: str
+    tool_calls: list[ToolCall]
+    # Stored as-is and handed back in ChatMessage.raw on later turns.
+    raw: Any
+    finish_reason: str | None
+    usage: LLMUsage = field(default_factory=LLMUsage)
+    model: str | None = None
+
+
 class LLMProviderError(Exception):
     """Base for every failure a provider reports. Messages never contain the key."""
 
@@ -101,6 +167,8 @@ class LLMProvider(Protocol):
     credential_label: str
 
     def generate(self, request: LLMRequest) -> LLMResponse: ...
+
+    def chat(self, request: ChatRequest) -> ChatResponse: ...
 
 
 # ------------------------------------------------------------------ #
