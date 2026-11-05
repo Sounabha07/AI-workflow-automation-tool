@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import type { BlockSchemaResponse } from "@/api/types";
-import type { FlowNode, FlowEdge } from "@/lib/definition";
+import { toolOwner, type FlowNode, type FlowEdge } from "@/lib/definition";
 import { InputPane, type BlockDataEntry } from "./InputPane";
 import { ParametersPane } from "./ParametersPane";
 import { OutputPane } from "./OutputPane";
@@ -83,6 +83,8 @@ export function BlockEditor({
           </div>
           <OutputPane
             blockId={node.id}
+            blockType={node.data.blockType}
+            isTool={!!toolOwner(edges, node.id)}
             status={current?.status ?? "idle"}
             output={current?.output ?? null}
             error={current?.error ?? null}

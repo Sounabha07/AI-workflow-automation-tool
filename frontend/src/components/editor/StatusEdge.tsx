@@ -2,6 +2,12 @@ import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps } from "@xyf
 import type { FlowEdge } from "@/lib/definition";
 import { useEditorStore } from "@/store/editor";
 
+/** An HTTP block wired to an agent's Tools handle: dashed, never run-colored. */
+export function ToolEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }: EdgeProps<FlowEdge>) {
+  const [path] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
+  return <BaseEdge id={id} path={path} style={{ stroke: "#A78BDA", strokeWidth: 2, strokeDasharray: "6 4" }} />;
+}
+
 export function StatusEdge({
   id,
   sourceX,

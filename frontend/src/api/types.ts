@@ -41,7 +41,9 @@ export type FieldType =
   | "field_definitions"
   | "switch_rules"
   /** Picks a saved credential by id (see /credentials). */
-  | "credential";
+  | "credential"
+  /** An agent's connected tool block ids; set by wiring, shown read-only. */
+  | "tool_list";
 
 export interface FieldOption {
   label: string;
@@ -63,6 +65,8 @@ export interface FieldSchema {
   show_when?: Record<string, ShowWhenValue>;
   /** For "credential" fields: which credential types can be picked. */
   credential_types?: string[];
+  /** "tool": rendered by the tool definition panel, only when the block is an agent's tool. */
+  section?: "tool";
 }
 
 export interface BlockTypeSchema {
@@ -75,6 +79,8 @@ export interface BlockTypeSchema {
 export interface BlockSchemaResponse {
   type: string;
   schema: BlockTypeSchema;
+  /** Whether an agent can call this block type as a tool. */
+  usable_as_tool?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +138,8 @@ export interface PipelineResponse {
   triggers: PipelineTrigger[];
   /** Each Wait for Input block's fixed resume link (resumes its longest-waiting run). */
   resume_links: { block_id: string; url: string }[];
+  /** Valid, but worth a look (e.g. schema keywords Gemini ignores). */
+  warnings?: string[];
 }
 
 export interface BlockError {
@@ -139,6 +147,8 @@ export interface BlockError {
   type: string;
   attempts: number;
   retryable: boolean;
+  /** Structured context, e.g. an agent's {stop_reason, trace, usage}. */
+  detail?: Record<string, unknown>;
 }
 
 export interface RunErrorSummary extends BlockError {
@@ -246,7 +256,58 @@ export interface RunStatusEvent {
   error_summary: RunErrorSummary | null;
 }
 
-export type RunEvent = BlockStatusEvent | RunStatusEvent;
+/** One agent step was checkpointed (a model turn or a tool call). */
+export interface AgentStepEvent {
+  type: "agent.step";
+  run_id: string;
+  block_id: string;
+  step_index: number;
+  kind: "model" | "tool";
+  tool_name: string | null;
+  status: "started" | "completed" | "failed";
+}
+
+export type RunEvent = BlockStatusEvent | RunStatusEvent | AgentStepEvent;
+
+// ---------------------------------------------------------------------------
+// Agents
+// ---------------------------------------------------------------------------
+
+export interface AgentTraceStep {
+  step_index: number;
+  kind: "model" | "tool";
+  status: "started" | "completed" | "failed";
+  duration_ms: number | null;
+  replayed: boolean;
+  // model turns
+  text?: string;
+  tool_calls?: { id: string; name: string; args: unknown }[];
+  usage?: Record<string, number | null> | null;
+  nudge?: string;
+  // tool calls
+  tool_name?: string;
+  tool_call_id?: string;
+  side_effects?: boolean | null;
+  args?: unknown;
+  request?: Record<string, unknown> | null;
+  response?: Record<string, unknown> | null;
+  result?: unknown;
+  attempts?: number | null;
+  outcome_unknown?: boolean;
+  error?: string | null;
+}
+
+export interface TestToolResponse {
+  ok: boolean;
+  request: Record<string, unknown> | null;
+  response: Record<string, unknown>;
+  result: unknown;
+  error: string | null;
+  status: number | null;
+  side_effects: boolean;
+  attempts: number;
+  duration_ms: number;
+}
 
 // ---------------------------------------------------------------------------
 // Saved credentials. Secrets are write-only: responses carry only a hint.

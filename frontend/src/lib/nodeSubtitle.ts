@@ -57,6 +57,13 @@ export function nodeSubtitle(data: BlockNodeData): string {
     return fields.map((f) => f.name).filter(Boolean).join(", ");
   }
 
+  if (blockType === "agent") {
+    const task = typeof config.task === "string" ? config.task.trim() : "";
+    if (!task) return "Not configured";
+    const n = Array.isArray(config.tools) ? config.tools.length : 0;
+    return `${n} tool${n === 1 ? "" : "s"}`;
+  }
+
   if (blockType === "llm") {
     const model = typeof config.model === "string" ? config.model.trim() : "";
     const prompt = typeof config.prompt === "string" ? config.prompt.trim() : "";

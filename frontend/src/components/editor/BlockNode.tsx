@@ -1,9 +1,9 @@
 import { memo, useEffect } from "react";
 import { Handle, Position, useUpdateNodeInternals, type NodeProps } from "@xyflow/react";
-import { AlertTriangle, Ban, Check, Hourglass, Play, SkipForward } from "lucide-react";
+import { AlertTriangle, Ban, Check, Hourglass, Play, SkipForward, Wrench } from "lucide-react";
 import { blockVisual, COLOR_TEXT_CLASS } from "@/lib/blockVisuals";
 import { nodeSubtitle, switchOutputs } from "@/lib/nodeSubtitle";
-import type { FlowNode } from "@/lib/definition";
+import { TOOLS_HANDLE, type FlowNode } from "@/lib/definition";
 import { useEditorStore } from "@/store/editor";
 import { cn } from "@/lib/utils";
 
@@ -36,10 +36,14 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
   const visual = blockVisual(data.blockType);
   const Icon = visual.icon;
   const state = useEditorStore((s) => s.blockStates[id]);
-  const status = state?.status ?? "idle";
+  // A tool block runs only inside its agent, so it never shows run status.
+  const isTool = useEditorStore((s) => s.edges.some((e) => e.data?.tool === true && e.source === id));
+  const status = isTool ? "idle" : state?.status ?? "idle";
+  const isAgent = data.blockType === "agent";
+  const activity = useEditorStore((s) => (isAgent ? s.agentActivity[id] : null));
   const height = boxHeight(data.blockType, data.config);
   const outputs = data.blockType === "switch" ? switchOutputs(data.config) : ["main"];
-  const subtitle = nodeSubtitle(data);
+  const subtitle = isAgent && status === "running" && activity ? activity : nodeSubtitle(data);
 
   const openEditor = useEditorStore((s) => s.setOpenBlockId);
   const runWorkflow = useEditorStore((s) => s.runWorkflow);
@@ -105,6 +109,28 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
           )}
         />
 
+        {isAgent && (
+          <>
+            <Handle
+              type="target"
+              id={TOOLS_HANDLE}
+              position={Position.Bottom}
+              title="Tools: connect HTTP Request blocks"
+              className="!h-3 !w-3 !rounded-sm !border-2 !border-llm !bg-surface hover:!scale-125 hover:!bg-llm"
+            />
+            <span className="pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 text-[10px] font-medium uppercase tracking-wide text-llm">
+              Tools
+            </span>
+          </>
+        )}
+        {isTool && (
+          <span
+            title="Tool: runs when its agent calls it"
+            className="absolute -bottom-2 -left-2 grid h-5 w-5 place-items-center rounded-full border-2 border-canvas bg-llm text-white"
+          >
+            <Wrench className="h-2.5 w-2.5" />
+          </span>
+        )}
         {visual.isTrigger && (
           <span
             aria-hidden="true"
@@ -166,7 +192,7 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
             </span>
           ))}
       </div>
-      <div className="mt-2 w-[150px] text-center">
+      <div className={cn("w-[150px] text-center", isAgent ? "mt-6" : "mt-2")}>
         <div className="text-[13px] font-semibold">{id}</div>
         <div className="mt-0.5 overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-ink-3">
           {subtitle}

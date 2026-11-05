@@ -11,13 +11,48 @@ export interface BlockNodeData extends Record<string, unknown> {
 export interface StatusEdgeData extends Record<string, unknown> {
   /** The switch output this edge hangs off, or undefined for a plain block. */
   output?: string;
+  /** A tool connection (HTTP block -> agent's Tools handle): not a DAG edge. */
+  tool?: boolean;
 }
 
 export type FlowNode = Node<BlockNodeData, "block">;
-export type FlowEdge = Edge<StatusEdgeData, "status">;
+export type FlowEdge = Edge<StatusEdgeData, "status" | "tool">;
+
+/** The agent's target handle that tool blocks connect to. */
+export const TOOLS_HANDLE = "tools";
 
 export function edgeId(source: string, target: string): string {
   return `${source}->${target}`;
+}
+
+export function toolEdge(toolId: string, agentId: string): FlowEdge {
+  return {
+    id: `${toolId}=>${agentId}`,
+    source: toolId,
+    target: agentId,
+    sourceHandle: "main",
+    targetHandle: TOOLS_HANDLE,
+    type: "tool",
+    data: { tool: true },
+  };
+}
+
+export function isToolEdge(e: FlowEdge): boolean {
+  return e.data?.tool === true;
+}
+
+/** Edges the scheduler sees: everything except tool connections. */
+export function dagEdges(edges: FlowEdge[]): FlowEdge[] {
+  return edges.filter((e) => !isToolEdge(e));
+}
+
+/** The agent a tool block belongs to, if it is one. */
+export function toolOwner(edges: FlowEdge[], blockId: string): string | undefined {
+  return edges.find((e) => isToolEdge(e) && e.source === blockId)?.target;
+}
+
+export function agentToolIds(config: Record<string, unknown>): string[] {
+  return Array.isArray(config.tools) ? config.tools.filter((t): t is string => typeof t === "string") : [];
 }
 
 /** Converts the backend definition shape (A2) into React Flow nodes/edges. */
@@ -40,6 +75,12 @@ export function definitionToFlow(definition: WorkflowDefinition): {
         notes: block.notes ?? "",
       },
     });
+
+    if (block.type === "agent") {
+      for (const toolId of agentToolIds(block.config ?? {})) {
+        if (definition.blocks[toolId]) edges.push(toolEdge(toolId, blockId));
+      }
+    }
 
     if (Array.isArray(block.next)) {
       for (const target of block.next) {
@@ -73,11 +114,13 @@ export function definitionToFlow(definition: WorkflowDefinition): {
 /** Converts React Flow nodes/edges back into the backend definition shape. */
 export function flowToDefinition(nodes: FlowNode[], edges: FlowEdge[]): WorkflowDefinition {
   const blocks: Record<string, BlockDefinition> = {};
+  const dag = dagEdges(edges);
+  const toolEdges = edges.filter(isToolEdge);
 
   for (const node of nodes) {
-    const depends_on = edges.filter((e) => e.target === node.id).map((e) => e.source);
+    const depends_on = dag.filter((e) => e.target === node.id).map((e) => e.source);
 
-    const outgoing = edges.filter((e) => e.source === node.id);
+    const outgoing = dag.filter((e) => e.source === node.id);
     const next: string[] | Record<string, string[]> =
       node.data.blockType === "switch"
         ? outgoing.reduce<Record<string, string[]>>((acc, e) => {
@@ -87,9 +130,17 @@ export function flowToDefinition(nodes: FlowNode[], edges: FlowEdge[]): Workflow
           }, {})
         : outgoing.map((e) => e.target);
 
+    // An agent's tools follow its tool connections, keeping config order.
+    let config = node.data.config;
+    if (node.data.blockType === "agent") {
+      const connected = toolEdges.filter((e) => e.target === node.id).map((e) => e.source);
+      const ordered = agentToolIds(config).filter((t) => connected.includes(t));
+      config = { ...config, tools: [...ordered, ...connected.filter((t) => !ordered.includes(t))] };
+    }
+
     blocks[node.id] = {
       type: node.data.blockType,
-      config: node.data.config,
+      config,
       depends_on,
       next,
       position: { x: node.position.x, y: node.position.y },

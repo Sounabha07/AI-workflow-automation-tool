@@ -11,8 +11,9 @@ import { switchOutputs } from "@/lib/nodeSubtitle";
 import { RESUME_NAMESPACE } from "@/lib/expressions";
 import { FieldRenderer } from "./fields/FieldRenderer";
 import { SchedulePanel, WaitPanel, WebhookPanel } from "./TriggerPanels";
+import { ConnectedTools, ToolDefinitionPanel } from "./ToolPanels";
 import { useEditorStore } from "@/store/editor";
-import type { FlowNode } from "@/lib/definition";
+import { agentToolIds, toolOwner, type FlowNode } from "@/lib/definition";
 import { cn } from "@/lib/utils";
 
 const ID_PATTERN = /^[a-z][a-z0-9_]{0,62}$/;
@@ -33,6 +34,7 @@ export function ParametersPane({
   const visual = blockVisual(node.data.blockType);
   const Icon = visual.icon;
   const nodes = useEditorStore((s) => s.nodes);
+  const edges = useEditorStore((s) => s.edges);
   const updateNodeConfig = useEditorStore((s) => s.updateNodeConfig);
   const updateNodeNotes = useEditorStore((s) => s.updateNodeNotes);
   const removeEdgesForOutputs = useEditorStore((s) => s.removeEdgesForOutputs);
@@ -105,8 +107,11 @@ export function ParametersPane({
   // The schedule's cron (a per-field table) and timezone (a select) are
   // rendered by SchedulePanel instead of the generic fields.
   const fields = (schema?.fields ?? []).filter(
-    (f) => !(blockType === "schedule_trigger" && (f.name === "cron" || f.name === "timezone"))
+    (f) => !(blockType === "schedule_trigger" && (f.name === "cron" || f.name === "timezone")) && f.section !== "tool"
   );
+  // An HTTP block wired to an agent's Tools handle also shows its tool definition.
+  const owner = toolOwner(edges, node.id);
+  const toolFields = (schema?.fields ?? []).filter((f) => f.section === "tool");
 
   return (
     <>
@@ -116,7 +121,7 @@ export function ParametersPane({
         color={visual.color}
         onTestStep={onTestStep}
         testing={testing}
-        hideTest={visual.isTrigger}
+        hideTest={visual.isTrigger || !!owner}
       />
       <Tabs defaultValue="params" className="flex min-h-0 flex-1 flex-col">
         <div className="border-b border-line px-4">
@@ -127,9 +132,23 @@ export function ParametersPane({
         </div>
         <TabsContent value="params" className="min-h-0 flex-1 overflow-auto p-4">
           {blockType === "webhook_trigger" && <WebhookPanel blockId={node.id} />}
-          {fields.map((f) => (
-            <FieldRenderer key={f.name} field={f} config={effectiveConfig} outputs={outputs} onChange={handleFieldChange} />
-          ))}
+          {owner && (
+            <ToolDefinitionPanel
+              node={node}
+              agentId={owner}
+              fields={toolFields}
+              config={effectiveConfig}
+              outputs={outputs}
+              onChange={handleFieldChange}
+            />
+          )}
+          {fields.map((f) =>
+            f.type === "tool_list" ? (
+              <ConnectedTools key={f.name} toolIds={agentToolIds(node.data.config)} nodes={nodes} />
+            ) : (
+              <FieldRenderer key={f.name} field={f} config={effectiveConfig} outputs={outputs} onChange={handleFieldChange} />
+            )
+          )}
           {blockType === "schedule_trigger" && (
             <SchedulePanel
               key={node.id}

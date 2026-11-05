@@ -1,8 +1,9 @@
-import type { FlowEdge, FlowNode } from "./definition";
+import { dagEdges, isToolEdge, toolOwner, type FlowEdge, type FlowNode } from "./definition";
 import { blockVisual } from "./blockVisuals";
 
 /** True if `target` can already reach `source` — i.e. connecting source->target would close a loop. */
-export function wouldCreateCycle(edges: FlowEdge[], source: string, target: string): boolean {
+export function wouldCreateCycle(allEdges: FlowEdge[], source: string, target: string): boolean {
+  const edges = dagEdges(allEdges);
   const seen = new Set([target]);
   const queue = [target];
   while (queue.length) {
@@ -36,6 +37,9 @@ export function checkConnection(
   if (edges.some((e) => e.source === source && e.target === target)) {
     return { ok: false, message: "These blocks are already connected" };
   }
+  if (toolOwner(edges, source) || toolOwner(edges, target)) {
+    return { ok: false, message: "A tool runs only when its agent calls it, so it can't join the workflow" };
+  }
   const targetNode = nodes.find((n) => n.id === target);
   if (targetNode && blockVisual(targetNode.data.blockType).isTrigger) {
     return { ok: false, message: "Triggers start a workflow, so they have no input" };
@@ -46,9 +50,40 @@ export function checkConnection(
   return { ok: true };
 }
 
-/** Direct parents (depends_on) of a block. */
+/** Direct parents (depends_on) of a block. A tool block sees what its
+ * agent sees: its {{ }} references resolve when the agent runs. */
 export function parentsOf(edges: FlowEdge[], blockId: string): string[] {
-  return edges.filter((e) => e.target === blockId).map((e) => e.source);
+  const owner = toolOwner(edges, blockId);
+  if (owner) return parentsOf(edges, owner);
+  return edges.filter((e) => !isToolEdge(e) && e.target === blockId).map((e) => e.source);
+}
+
+export interface ToolConnectionCheck extends ConnectionCheck {}
+
+/** Rules for dropping a block's connector on an agent's Tools handle. */
+export function checkToolConnection(
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+  toolId: string,
+  agentId: string,
+  usableAsTool: (type: string) => boolean
+): ToolConnectionCheck {
+  const tool = nodes.find((n) => n.id === toolId);
+  if (!tool || !usableAsTool(tool.data.blockType)) {
+    return { ok: false, message: "Only HTTP Request blocks can be an agent's tools" };
+  }
+  const owner = toolOwner(edges, toolId);
+  if (owner) {
+    return {
+      ok: false,
+      message: owner === agentId ? "This tool is already connected" : `This block is already a tool of ${owner}`,
+    };
+  }
+  if (dagEdges(edges).some((e) => e.source === toolId || e.target === toolId)) {
+    return { ok: false, message: "Remove this block's workflow connections first: a tool runs only inside its agent" };
+  }
+  if (toolId === agentId) return { ok: false, message: "A block can't be its own tool" };
+  return { ok: true };
 }
 
 /** Every block upstream of blockId (not including direct parents), following depends_on. */

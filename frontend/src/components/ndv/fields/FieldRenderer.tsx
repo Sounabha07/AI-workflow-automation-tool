@@ -26,6 +26,8 @@ export function FieldRenderer({
   const set = (v: unknown) => onChange(field.name, v);
 
   switch (field.type) {
+    case "tool_list":
+      return null; // set by wiring; ParametersPane renders ConnectedTools
     case "boolean":
       return <BooleanField label={field.label} value={!!value} onChange={set} />;
     case "options":
