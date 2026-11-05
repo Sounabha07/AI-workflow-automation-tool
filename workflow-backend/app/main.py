@@ -14,6 +14,8 @@ from app.api.routes_schedule import router as schedule_router
 from app.api.routes_blocks import router as blocks_router
 from app.api.routes_credentials import router as credentials_router
 from app.api.routes_ws import router as ws_router
+from app.api.routes_tools import router as tools_router
+from app.llm import test_providers_enabled
 from app.errors import NotFoundError
 from app.validation import InvalidWorkflowError
 
@@ -43,7 +45,14 @@ app.include_router(hooks_router, prefix="/hooks", tags=["hooks"])
 app.include_router(schedule_router, prefix="/schedule", tags=["schedule"])
 app.include_router(blocks_router, prefix="/blocks", tags=["blocks"])
 app.include_router(credentials_router, prefix="/credentials", tags=["credentials"])
+app.include_router(tools_router, prefix="/tools", tags=["tools"])
 app.include_router(ws_router, tags=["ws"])
+
+# Test-only endpoints (the echo server), only with ENABLE_TEST_PROVIDERS=1.
+if test_providers_enabled():
+    from app.api.routes_test import router as test_router
+
+    app.include_router(test_router, prefix="/_test", tags=["test"])
 
 
 @app.exception_handler(InvalidWorkflowError)
