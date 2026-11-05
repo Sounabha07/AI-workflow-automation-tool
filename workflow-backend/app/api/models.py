@@ -40,6 +40,8 @@ class PipelineResponse(BaseModel):
     triggers: list[PipelineTrigger] = []
     # Each Wait for Input block's fixed resume link: [{block_id, url}].
     resume_links: list[dict] = []
+    # Valid, but worth a look (e.g. schema keywords Gemini ignores).
+    warnings: list[str] = []
 
 
 class PipelineListItem(BaseModel):
@@ -170,6 +172,8 @@ class SchedulePreviewResponse(BaseModel):
 class BlockSchemaResponse(BaseModel):
     type: str
     schema_: dict = Field(alias="schema")
+    # Whether an agent can call this block type as a tool.
+    usable_as_tool: bool = False
     model_config = ConfigDict(populate_by_name=True)
 
 

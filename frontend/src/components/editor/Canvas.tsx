@@ -14,16 +14,17 @@ import "@xyflow/react/dist/style.css";
 import { toast } from "sonner";
 import type { RunDetailResponse } from "@/api/types";
 import { BlockNode } from "./BlockNode";
-import { StatusEdge } from "./StatusEdge";
+import { StatusEdge, ToolEdge } from "./StatusEdge";
 import { RunBar } from "./RunBar";
 import { RunBanner } from "./RunBanner";
-import { edgeId, type FlowEdge, type FlowNode } from "@/lib/definition";
-import { checkConnection } from "@/lib/graph";
+import { edgeId, TOOLS_HANDLE, type FlowEdge, type FlowNode } from "@/lib/definition";
+import { checkConnection, checkToolConnection } from "@/lib/graph";
 import { useAddBlock } from "@/hooks/useAddBlock";
+import { useBlockSchemas } from "@/hooks/useBlockSchemas";
 import { useEditorStore } from "@/store/editor";
 
 const nodeTypes = { block: BlockNode };
-const edgeTypes = { status: StatusEdge };
+const edgeTypes = { status: StatusEdge, tool: ToolEdge };
 
 export function Canvas({
   wrapperRef,
@@ -46,7 +47,10 @@ export function Canvas({
   const setEdges = useEditorStore((s) => s.setEdges);
   const markDirty = useEditorStore((s) => s.markDirty);
   const activeRunId = useEditorStore((s) => s.activeRunId);
+  const connectTool = useEditorStore((s) => s.connectTool);
+  const disconnectTools = useEditorStore((s) => s.disconnectTools);
   const addBlock = useAddBlock();
+  const { data: schemas = [] } = useBlockSchemas();
 
   // The canvas stays editable in run view too (B6): editing marks it dirty,
   // and Save there opens SaveDialog instead of saving in place.
@@ -64,14 +68,28 @@ export function Canvas({
 
   const onEdgesChange = useCallback(
     (changes: EdgeChange<FlowEdge>[]) => {
+      const removedIds = new Set(changes.filter((c) => c.type === "remove").map((c) => c.id));
+      if (removedIds.size) disconnectTools(edges.filter((e) => removedIds.has(e.id)));
       setEdges((es) => applyEdgeChanges(changes, es));
-      if (changes.some((c) => c.type === "remove")) markDirty();
+      if (removedIds.size) markDirty();
     },
-    [setEdges, markDirty]
+    [edges, setEdges, markDirty, disconnectTools]
   );
 
   const onConnect = useCallback(
     (connection: Connection) => {
+      // Onto an agent's Tools handle: a tool connection, not a DAG edge.
+      if (connection.targetHandle === TOOLS_HANDLE) {
+        const usable = (type: string) => schemas.find((s) => s.type === type)?.usable_as_tool === true;
+        const check = checkToolConnection(nodes, edges, connection.source, connection.target, usable);
+        if (!check.ok) {
+          toast.error(check.message);
+          return;
+        }
+        connectTool(connection.source, connection.target);
+        markDirty();
+        return;
+      }
       const check = checkConnection(nodes, edges, connection.source, connection.target);
       if (!check.ok) {
         toast.error(check.message);
@@ -92,7 +110,7 @@ export function Canvas({
       ]);
       markDirty();
     },
-    [nodes, edges, setEdges, markDirty]
+    [nodes, edges, schemas, setEdges, markDirty, connectTool]
   );
 
   const onDrop = useCallback(

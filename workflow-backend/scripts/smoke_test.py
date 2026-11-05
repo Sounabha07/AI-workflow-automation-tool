@@ -137,7 +137,7 @@ def main():
     check("GET /health reports ok", (h or {}).get("status") == "ok", err)
     _, blocks, _ = api("GET", "/blocks")
     types = [b["type"] for b in blocks or []]
-    check("eight block types registered", len(types) == 8, f"got: {types}")
+    check("nine block types registered", len(types) == 9, f"got: {types}")
     check("switch block is registered", "switch" in types)
     for t in ("schedule_trigger", "webhook_trigger", "wait_for_input"):
         check(f"{t} block is registered", t in types)
@@ -331,6 +331,7 @@ def main():
     wait_fixed_link_checks()
     wait_timeout_checks()
     webhook_checks()
+    agent_checks(blocks or [])
     schedule_fire_checks(sched_id, sched_started)
 
     print(f"\n{passed} passed, {failed} failed")
@@ -579,8 +580,211 @@ def webhook_checks():
           api("DELETE", f"/pipelines/{hook_id}")[0] == 204 and api("POST", hook_path, {"path": "health"})[0] == 404)
 
 
+# ── Agent block (scripted provider + /_test/echo; needs ENABLE_TEST_PROVIDERS=1) ── #
+
+AGENT_SECRET = "smoke-tool-token-7f3a9c"  # a tool's bearer token; must never show up in outputs
+
+
+def echo_url(path):
+    return f"http://api:8000/_test/echo/{PREFIX}/{path}"
+
+
+def tool_cfg(method, url, name, params, description=None, **extra):
+    return {**http_cfg(url), "method": method, "tool_name": name,
+            "tool_description": description or f"Calls the {name} test endpoint and returns what it received.",
+            "tool_parameters": params, **extra}
+
+
+def echo_count(path):
+    return (api("GET", f"/_test/echo/count?path=/_test/echo/{PREFIX}/{path}")[1] or {}).get("count", 0)
+
+
+def agent_def(script, agent_extra=None, tools=None, after=True):
+    get_params = {"type": "object", "properties": {"item": {"type": "string"}, "limit": {"type": "integer"}},
+                  "required": ["item"]}
+    tools = tools or {
+        "get_tool": blk("http_request", tool_cfg(
+            "GET", echo_url("get/{item}"), "get_item", get_params,
+            authentication="bearer", bearer_token=AGENT_SECRET), [], [], 200),
+        "post_tool": blk("http_request", tool_cfg(
+            "POST", echo_url("post"), "save_note",
+            {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]},
+            tool_static_fields={"source": "smoke"}), [], [], 200),
+        "missing_tool": blk("http_request", tool_cfg(
+            "GET", "http://api:8000/_test/does-not-exist", "missing", {"type": "object", "properties": {}}),
+            [], [], 200),
+    }
+    agent_cfg = {"provider": "scripted", "model": "scripted", "task": "Find the failed workflow.",
+                 "tools": list(tools), "script": script,
+                 "output_schema": {"type": "object", "required": ["workflow_name", "error"],
+                                   "properties": {"workflow_name": {"type": "string"}, "error": {"type": "string"}}},
+                 **(agent_extra or {})}
+    blocks_ = {
+        "trigger": blk("manual_trigger", {}, [], ["agent_1"], 0),
+        "agent_1": blk("agent", agent_cfg, ["trigger"], ["after"] if after else [], 200),
+        **tools,
+    }
+    if after:
+        blocks_["after"] = blk("http_request", http_cfg(echo_url("after?name={{ agent_1.final.workflow_name }}")),
+                               ["agent_1"], [], 400)
+    return {"blocks": blocks_}
+
+
+def agent_checks(blocks):
+    section("15. Agent block with HTTP tools")
+    agent = next((b for b in blocks if b["type"] == "agent"), None)
+    check("agent is registered with category ai and usable_as_tool false",
+          bool(agent) and agent["schema"]["category"] == "ai" and agent.get("usable_as_tool") is False, f"{agent}")
+    http = next((b for b in blocks if b["type"] == "http_request"), {})
+    check("http_request is usable as a tool", http.get("usable_as_tool") is True)
+    providers = [o["value"] for f in (agent or {}).get("schema", {}).get("fields", [])
+                 if f["name"] == "provider" for o in f.get("options", [])]
+    if "scripted" not in providers:
+        check("the scripted provider is enabled (ENABLE_TEST_PROVIDERS=1)", False, f"providers: {providers}")
+        return
+
+    # Validation: each bad definition returns 400 naming the problem.
+    def problems_for(definition):
+        status, data, _ = api("POST", "/pipelines", {"name": f"{PREFIX}_agent_bad", "definition": definition})
+        return status, " ".join(problems_of(data))
+
+    base = agent_def([{"text": "x"}], after=False)
+    cases = []
+    d = json.loads(json.dumps(base)); d["blocks"]["agent_1"]["config"]["task"] = " "
+    cases.append(("an empty task", d, "task can't be empty"))
+    d = json.loads(json.dumps(base)); d["blocks"]["post_tool"]["config"]["tool_name"] = "get_item"
+    cases.append(("duplicate tool names", d, "Tool names must be unique"))
+    d = json.loads(json.dumps(base)); d["blocks"]["post_tool"]["config"]["tool_name"] = "finish"
+    cases.append(("a tool named finish", d, "reserved"))
+    d = json.loads(json.dumps(base)); d["blocks"]["post_tool"]["config"]["tool_description"] = "too short"
+    cases.append(("a short tool description", d, "at least 20 characters"))
+    d = json.loads(json.dumps(base)); d["blocks"]["post_tool"]["config"]["tool_parameters"] = {"type": "string"}
+    cases.append(("non-object tool parameters", d, '"type": "object"'))
+    d = json.loads(json.dumps(base)); d["blocks"]["agent_1"]["config"]["output_schema"] = "[1, 2]"
+    cases.append(("a non-object output schema", d, "output schema must be a JSON object"))
+    d = json.loads(json.dumps(base)); d["blocks"]["agent_1"]["config"]["max_iterations"] = 99
+    cases.append(("max_iterations out of range", d, "max_iterations must be a whole number from 1 to 50"))
+    d = json.loads(json.dumps(base)); d["blocks"]["agent_1"]["config"]["tools"].append("trigger")
+    cases.append(("a non-HTTP block as a tool", d, "only HTTP Request blocks can be tools"))
+    d = json.loads(json.dumps(base))
+    d["blocks"]["agent_2"] = blk("agent", {**d["blocks"]["agent_1"]["config"], "tools": ["post_tool"]}, ["trigger"], [], 300)
+    d["blocks"]["trigger"]["next"].append("agent_2")
+    cases.append(("a tool shared by two agents", d, "more than one agent"))
+    d = json.loads(json.dumps(base))
+    d["blocks"]["post_tool"]["depends_on"] = ["trigger"]; d["blocks"]["trigger"]["next"].append("post_tool")
+    cases.append(("a tool with its own connections", d, "can't have other connections"))
+    d = json.loads(json.dumps(base))
+    d["blocks"]["later"] = blk("http_request", http_cfg(HEALTH), ["agent_1"], [], 400)
+    d["blocks"]["agent_1"]["next"] = ["later"]
+    d["blocks"]["post_tool"]["config"]["url"] = echo_url("post?x={{ later.data.status }}")
+    cases.append(("a tool referencing a block downstream of its agent", d, "isn't upstream of its agent"))
+    for name, definition, needle in cases:
+        status, problems = problems_for(definition)
+        check(f"validation: {name} is a 400 naming it", status == 400 and needle in problems, f"{status} {problems}")
+    d = json.loads(json.dumps(base))
+    d["blocks"]["post_tool"]["config"]["tool_parameters"] = {
+        "type": "object", "properties": {"note": {"type": "string", "const": "x"}}}
+    status, data, err = api("POST", "/pipelines", {"name": f"{PREFIX}_agent_warn", "definition": d})
+    check("unsupported schema keywords are a warning, not a failure",
+          status == 201 and any("const" in w for w in (data or {}).get("warnings", [])), f"{status} {data or err}")
+
+    # The full run: parallel calls, a 404, invalid args, an unknown tool,
+    # plain text without finish, an invalid finish, a 503 from the model
+    # (retried, resumed from the checkpoint), then a valid finish.
+    script = [
+        {"tool_calls": [{"name": "get_item", "args": {"item": "a/b", "limit": 2}},
+                        {"name": "save_note", "args": {"note": "hello", "source": "model"}}]},
+        {"tool_calls": [{"name": "missing", "args": {}}]},
+        {"tool_calls": [{"name": "get_item", "args": {"item": 5}}]},
+        {"tool_calls": [{"name": "no_such_tool", "args": {}}]},
+        {"text": "It was wf_a."},
+        {"finish": {"workflow_name": 1}},
+        {"error": 503},
+        {"finish": {"workflow_name": "wf_a", "error": "boom"}},
+    ]
+    pid = new_pipe("agent", agent_def(script))
+    run = wait_run(start_run(pid), timeout=90)
+    check("the agent run succeeds", status_of(run) == "succeeded", f"status {status_of(run)} {(run or {}).get('error_summary')}")
+    if not run:
+        return
+    check("total_blocks excludes tool blocks", run.get("total_blocks") == 3, f"total_blocks {run.get('total_blocks')}")
+    rows = api("GET", f"/runs/{run['id']}/blocks")[1] or []
+    check("tool blocks never run on their own (no block_executions rows)",
+          not {r["block_id"] for r in rows} & {"get_tool", "post_tool", "missing_tool"}, f"{[r['block_id'] for r in rows]}")
+    a = block_of(run["id"], "agent_1")
+    out = a.get("output") or {}
+    trace = out.get("trace") or []
+    tools_ = [t for t in trace if t["kind"] == "tool"]
+    check("final is the validated structured answer", out.get("final") == {"workflow_name": "wf_a", "error": "boom"}, f"{out.get('final')}")
+    check("stop_reason is finished", out.get("stop_reason") == "finished")
+    check("7 iterations (the failed model call doesn't count)", out.get("iterations") == 7, f"{out.get('iterations')}")
+    check("usage is summed", (out.get("usage") or {}).get("total_tokens") == 7 * 15, f"{out.get('usage')}")
+    check("the 503 was retried once through the block's retry path", a.get("retry_count") == 1, f"{a.get('retry_count')}")
+    first_turn = [t for t in tools_ if t["step_index"] == 0]
+    check("two tool calls ran in parallel in one turn", len(first_turn) == 2 and all(t["status"] == "completed" for t in first_turn), f"{first_turn}")
+    check("steps from before the retry are marked replayed", any(t.get("replayed") for t in trace))
+    missing = next((t for t in tools_ if t["tool_name"] == "missing"), {})
+    check("a 404 comes back as an observation, not a block failure",
+          missing.get("status") == "failed" and (missing.get("response") or {}).get("status") == 404, f"{missing}")
+    invalid = next((t for t in tools_ if t["step_index"] == 2), {})
+    check("invalid args are an observation", "invalid arguments" in str((invalid.get("response") or {}).get("error")), f"{invalid}")
+    unknown = next((t for t in tools_ if t["tool_name"] == "no_such_tool"), {})
+    check("an unknown tool is an observation", "no tool named" in str((unknown.get("response") or {}).get("error")))
+    check("plain text without finish got one correction", sum(1 for t in trace if t.get("nudge")) == 1)
+    bad_finish = [t for t in tools_ if t["tool_name"] == "finish" and t["status"] == "failed"]
+    check("the invalid finish was sent back for correction", len(bad_finish) == 1)
+    check("the GET tool ran exactly once", echo_count("get/a/b") == 1, f"{api('GET', '/_test/echo/count')[1]}")
+    check("the POST tool ran exactly once (no repeat after the retry)", echo_count("post") == 1, f"{echo_count('post')}")
+    post = next((t for t in tools_ if t["tool_name"] == "save_note"), {})
+    sent = ((post.get("result") or {}).get("data") or {}).get("body") or {}
+    check("static fields win over the model's values", sent.get("source") == "smoke" and sent.get("note") == "hello", f"{sent}")
+    get = next((t for t in tools_ if t["tool_name"] == "get_item"), {})
+    check("path params are URL-encoded", "/get/a%2Fb" in ((get.get("request") or {}).get("url") or ""), f"{get.get('request')}")
+    check("GET args become query params", (get.get("request") or {}).get("query", {}).get("limit") == "2")
+    check("the tool's auth header is masked in the trace", (get.get("request") or {}).get("headers", {}).get("Authorization") == "••••••••")
+    after = block_of(run["id"], "after")
+    check("a downstream block resolved {{ agent_1.final.workflow_name }}",
+          (((after.get("output") or {}).get("data") or {}).get("query") or {}).get("name") == "wf_a", f"{after.get('output')}")
+    # Every block's output, resolved config and error, and so the agent's
+    # trace. (The definition itself still holds the token, as for any HTTP
+    # block: auth fields are part of a block's saved config.)
+    run_detail = api("GET", f"/runs/{run['id']}")[1] or {}
+    blob = json.dumps(rows) + json.dumps({k: v for k, v in run_detail.items() if k != "pipeline_snapshot"})
+    check("the tool's credential appears nowhere in outputs, resolved configs or the trace", AGENT_SECRET not in blob)
+
+    # max_iterations: a script that never finishes.
+    loop_def = agent_def([{"tool_calls": [{"name": "get_item", "args": {"item": "loop"}}]}],
+                         {"max_iterations": 2}, after=False)
+    run = wait_run(start_run(new_pipe("agent_loop", loop_def)), timeout=60)
+    check("a looping agent fails the run at max_iterations", status_of(run) == "failed", f"status {status_of(run)}")
+    err = block_of(run["id"], "agent_1").get("error") or {} if run else {}
+    check("...with stop_reason max_iterations and the trace kept",
+          (err.get("detail") or {}).get("stop_reason") == "max_iterations" and len((err.get("detail") or {}).get("trace") or []) == 4
+          and err.get("retryable") is False, f"{err}")
+
+    # Test step on an agent: its tool calls are real.
+    tdef = agent_def([{"tool_calls": [{"name": "save_note", "args": {"note": "from test step"}}]},
+                      {"finish": {"workflow_name": "t", "error": "e"}}], after=False)
+    tpid = new_pipe("agent_test_step", tdef)
+    before = echo_count("post")
+    status, data, err = api("POST", "/runs/test", {"pipeline_id": tpid, "block_id": "agent_1", "definition": tdef})
+    trun = wait_run(data["run_id"]) if status == 202 else None
+    check("test step on an agent succeeds and its tool call is real",
+          status_of(trun) == "succeeded" and echo_count("post") == before + 1, f"{status} {err} {status_of(trun)}")
+    status, _, _ = api("POST", "/runs/test", {"pipeline_id": tpid, "block_id": "post_tool", "definition": tdef})
+    check("test step on a tool block is refused (use Test tool)", status == 400)
+
+    # Test tool: one call, no agent.
+    status, data, err = api("POST", "/tools/test", {"definition": tdef, "block_id": "get_tool", "args": {"item": "probe"}})
+    check("POST /tools/test runs one call", status == 200 and (data or {}).get("ok") is True
+          and (data or {}).get("request", {}).get("headers", {}).get("Authorization") == "••••••••", f"{status} {data or err}")
+    check("...and the credential isn't in its response", AGENT_SECRET not in json.dumps(data))
+    status, data, _ = api("POST", "/tools/test", {"definition": tdef, "block_id": "get_tool", "args": {"item": 5}})
+    check("POST /tools/test rejects args that don't match the schema", status == 400 and problems_of(data))
+
+
 def schedule_fire_checks(sched_id, started):
-    section("15. Schedule trigger fires")
+    section("16. Schedule trigger fires")
     deadline = started + 75  # "* * * * *" is due within 60s of activation
     runs = pipeline_runs(sched_id)
     while time.monotonic() < deadline and not runs:

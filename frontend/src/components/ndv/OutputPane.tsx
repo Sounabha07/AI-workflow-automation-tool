@@ -4,7 +4,9 @@ import { retryHint } from "@/lib/errorHints";
 import { DataView, type ViewMode } from "./DataView";
 import { ModeToggle } from "./InputPane";
 import { ResumePanel } from "./ResumePanel";
-import type { NodeRuntimeStatus } from "@/store/editor";
+import { AgentSummary, AgentTrace } from "./AgentOutput";
+import type { AgentTraceStep } from "@/api/types";
+import { useEditorStore, type NodeRuntimeStatus } from "@/store/editor";
 
 function Empty({ icon: Icon, children }: { icon: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
   return (
@@ -19,6 +21,8 @@ function Empty({ icon: Icon, children }: { icon: React.ComponentType<{ className
 
 export function OutputPane({
   blockId,
+  blockType,
+  isTool,
   status,
   output,
   error,
@@ -30,6 +34,8 @@ export function OutputPane({
   onModeChange,
 }: {
   blockId: string;
+  blockType?: string;
+  isTool?: boolean;
   status: NodeRuntimeStatus;
   output: Record<string, unknown> | null;
   error: BlockError | null;
@@ -40,6 +46,22 @@ export function OutputPane({
   mode: ViewMode;
   onModeChange: (mode: ViewMode) => void;
 }) {
+  const isAgent = blockType === "agent";
+  const activity = useEditorStore((s) => (isAgent ? s.agentActivity[blockId] : null));
+  const detail = (error?.detail ?? null) as Record<string, unknown> | null;
+  if (isTool) {
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex h-12 items-center border-b border-line px-4">
+          <h3 className="m-0 text-xs font-semibold text-ink-2">Output</h3>
+        </div>
+        <Empty icon={Square}>
+          This block is a tool: it runs only when its agent calls it. Its calls and results are in the agent's trace. Use
+          Test tool to call it on its own.
+        </Empty>
+      </div>
+    );
+  }
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex h-12 items-center gap-2 border-b border-line px-4">
@@ -61,6 +83,17 @@ export function OutputPane({
               {error.message}
             </pre>
             <div className="mt-2 text-xs text-ink-2">{retryHint(error)}</div>
+            {isAgent && detail && (
+              <div className="mt-3 rounded-md bg-surface p-3">
+                <AgentSummary
+                  stopReason={detail.stop_reason}
+                  iterations={detail.iterations}
+                  toolCalls={detail.tool_calls}
+                  usage={detail.usage}
+                />
+                <AgentTrace trace={(detail.trace as AgentTraceStep[]) ?? []} />
+              </div>
+            )}
           </div>
         ) : status === "waiting" ? (
           <ResumePanel blockId={blockId} resumeUrl={resumeUrl} waitDeadline={waitDeadline} />
@@ -73,7 +106,9 @@ export function OutputPane({
               : "Waiting for earlier blocks to finish."}
           </Empty>
         ) : status === "running" ? (
-          <Empty icon={Loader2}>Running now. The output appears here when it finishes.</Empty>
+          <Empty icon={Loader2}>
+            {isAgent && activity ? `Agent: ${activity}` : "Running now. The output appears here when it finishes."}
+          </Empty>
         ) : status === "skipped" ? (
           <Empty icon={SkipForward}>Skipped because the switch sent data down a different output.</Empty>
         ) : !output ? (
@@ -87,7 +122,26 @@ export function OutputPane({
               </span>
               <span className="text-ink-3">1 item</span>
             </div>
-            <DataView data={output} mode={mode} baseId={blockId} />
+            {isAgent ? (
+              <>
+                <AgentSummary
+                  final={output.final}
+                  stopReason={output.stop_reason}
+                  iterations={output.iterations}
+                  toolCalls={output.tool_calls}
+                  usage={output.usage}
+                />
+                <AgentTrace trace={(output.trace as AgentTraceStep[]) ?? []} />
+                <h4 className="mb-2 mt-4 text-xs font-semibold text-ink-2">Output fields</h4>
+                <DataView
+                  data={{ ...output, trace: `${(output.trace as unknown[] | undefined)?.length ?? 0} steps` }}
+                  mode={mode}
+                  baseId={blockId}
+                />
+              </>
+            ) : (
+              <DataView data={output} mode={mode} baseId={blockId} />
+            )}
           </>
         )}
       </div>

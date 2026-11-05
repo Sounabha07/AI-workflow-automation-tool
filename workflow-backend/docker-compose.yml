@@ -36,6 +36,8 @@ services:
       # from workflow-backend/.env. Empty is fine: those blocks then fail fast.
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_BASE_URL=${GEMINI_BASE_URL:-}
+      # 1 adds the scripted LLM provider (CI and the smoke test only). Off by default.
+      - ENABLE_TEST_PROVIDERS=${ENABLE_TEST_PROVIDERS:-0}
     volumes:
       - .:/app
     depends_on:
@@ -68,6 +70,8 @@ services:
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
       # Encrypts credentials saved through /credentials.
       - CREDENTIALS_ENCRYPTION_KEY=${CREDENTIALS_ENCRYPTION_KEY:-}
+      # 1 adds the scripted provider and the /_test/echo endpoints. Off by default.
+      - ENABLE_TEST_PROVIDERS=${ENABLE_TEST_PROVIDERS:-0}
     ports:
       - "8000:8000"
     volumes:

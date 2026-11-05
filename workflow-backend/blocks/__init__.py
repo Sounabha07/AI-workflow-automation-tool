@@ -6,10 +6,12 @@ from blocks.http_request import HttpRequestBlock
 from blocks.switch import SwitchBlock
 from blocks.wait_for_input import WaitForInputBlock
 from blocks.llm import LLMBlock
+from blocks.agent import AgentBlock
 
 __all__ = [
     "ManualTriggerBlock", "ScheduleTriggerBlock", "WebhookTriggerBlock",
     "InputBlock", "HttpRequestBlock", "SwitchBlock", "WaitForInputBlock", "LLMBlock",
+    "AgentBlock",
 ]
 
 # Block types that start a run. A workflow has exactly one, with no inputs.

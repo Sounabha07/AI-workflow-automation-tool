@@ -8,10 +8,11 @@ from typing import Any
 from uuid import UUID
 
 import blocks  # noqa: F401 -- importing this registers every block
+from app.agent import tools as agent_tools
 from app.llm import DEFAULT_PROVIDER, PROVIDERS
 from blocks import TRIGGER_TYPES, WAIT_TYPE
 from blocks.llm import RESPONSE_FORMATS, TEMPERATURE_RANGE
-from blocks.registry import list_registered_types
+from blocks.registry import get_block_class, list_registered_types
 from blocks.schedule_trigger import DEFAULT_TIMEZONE, schedule_problem
 from blocks.switch import FALLBACK, switch_outputs
 from blocks.wait_for_input import timeout_problem
@@ -28,6 +29,13 @@ def edge_targets(block_def: dict) -> list[str]:
     if isinstance(nxt, dict):
         return [t for targets in nxt.values() if isinstance(targets, list) for t in targets]
     return list(nxt) if isinstance(nxt, list) else []
+
+
+def config_of(block_def: Any) -> dict:
+    """A block's config, or {} when it's missing or not an object (that
+    case is reported once, by validate_definition)."""
+    config = block_def.get("config") if isinstance(block_def, dict) else None
+    return config if isinstance(config, dict) else {}
 
 
 def _strings(value: Any):
@@ -50,7 +58,7 @@ def _resume_ref_problems(block_defs: dict) -> list[str]:
     for block_id, b in block_defs.items():
         if not isinstance(b, dict):
             continue
-        for text in _strings(b.get("config") or {}):
+        for text in _strings(config_of(b)):
             for m in PLACEHOLDER.finditer(text):
                 segments = m.group(1).strip().split(".")
                 if segments[0] != RESUME_NAMESPACE:
@@ -81,7 +89,7 @@ def validate_definition(definition: Any) -> list[str]:
     malformed: set[str] = set()
 
     for block_id, b in block_defs.items():
-        if not BLOCK_ID_PATTERN.match(block_id):
+        if not isinstance(block_id, str) or not BLOCK_ID_PATTERN.match(block_id):
             problems.append(
                 f"Block id '{block_id}' is invalid. Use lowercase letters, digits and "
                 f"underscores, starting with a letter (max 63 characters)."
@@ -94,8 +102,13 @@ def validate_definition(definition: Any) -> list[str]:
             continue
 
         block_type = b.get("type")
-        if block_type not in registered:
+        if not isinstance(block_type, str) or block_type not in registered:
             problems.append(f"Block '{block_id}' has unknown type '{block_type}'.")
+            block_type = None
+
+        if b.get("config") is not None and not isinstance(b.get("config"), dict):
+            problems.append(f"Block '{block_id}': 'config' must be an object.")
+        config = config_of(b)
 
         depends_on = b.get("depends_on", [])
         if not isinstance(depends_on, list):
@@ -110,10 +123,10 @@ def validate_definition(definition: Any) -> list[str]:
                 )
                 malformed.add(block_id)
             else:
-                config = b.get("config") or {}
+                rules = config.get("rules")
                 rule_outputs = [
                     str(r.get("output", "")).strip()
-                    for r in config.get("rules") or [] if isinstance(r, dict)
+                    for r in (rules if isinstance(rules, list) else []) if isinstance(r, dict)
                 ]
                 if any(not o for o in rule_outputs):
                     problems.append(f"Switch '{block_id}': every rule needs an output name.")
@@ -143,12 +156,13 @@ def validate_definition(definition: Any) -> list[str]:
             malformed.add(block_id)
 
         if block_type == "llm":
-            problems.extend(llm_config_problems(block_id, b.get("config") or {}))
+            problems.extend(llm_config_problems(block_id, config))
+        if block_type == agent_tools.AGENT_TYPE:
+            problems.extend(agent_config_problems(block_id, config))
 
         if block_type in TRIGGER_TYPES and depends_on:
             problems.append(f"Trigger '{block_id}' can't have incoming connections.")
 
-        config = b.get("config") or {}
         if block_type == "schedule_trigger":
             problem = schedule_problem(config.get("cron"), config.get("timezone") or DEFAULT_TIMEZONE)
             if problem:
@@ -172,6 +186,7 @@ def validate_definition(definition: Any) -> list[str]:
         )
 
     problems.extend(_resume_ref_problems(block_defs))
+    problems.extend(tool_wiring_problems(block_defs))
 
     if malformed:
         return problems
@@ -325,17 +340,204 @@ def llm_config_problems(block_id: str, config: Any) -> list[str]:
     return problems
 
 
+def _check_number(problems, label, value, lo, hi, integer=True):
+    if value in (None, "") or _is_template(value):
+        return
+    try:
+        n = float(value)
+        if isinstance(value, bool) or (integer and n != int(n)) or not lo <= n <= hi:
+            raise ValueError
+    except (TypeError, ValueError):
+        kind = "a whole number" if integer else "a number"
+        problems.append(f"{label} must be {kind} from {lo:g} to {hi:g}.")
+
+
+def _json_value(value: Any) -> Any:
+    if isinstance(value, str) and value.strip():
+        try:
+            return parse_json_template(value)
+        except ValueError:
+            return None
+    return value
+
+
+def agent_config_problems(block_id: str, config: Any) -> list[str]:
+    """Config checks for an agent block. Its tools are checked by
+    tool_wiring_problems."""
+    from blocks.agent import LIMITS
+
+    if not isinstance(config, dict):
+        return [f"Agent '{block_id}': 'config' must be an object."]
+    problems: list[str] = []
+    where = f"Agent '{block_id}'"
+    provider = config.get("provider", DEFAULT_PROVIDER)
+    if provider not in PROVIDERS:
+        problems.append(f"{where}: unknown provider '{provider}'. Use one of: {', '.join(PROVIDERS)}.")
+    if "api_key" in config:
+        problems.append(f"{where}: API keys can't be stored in a workflow. Save the key as a credential instead.")
+    credential = config.get("credential")
+    if credential not in (None, ""):
+        try:
+            UUID(str(credential))
+        except ValueError:
+            problems.append(f"{where}: 'credential' must be a saved credential's id.")
+    task = config.get("task")
+    if not isinstance(task, str) or not task.strip():
+        problems.append(f"{where}: the task can't be empty.")
+    tools = config.get("tools", [])
+    if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
+        problems.append(f"{where}: 'tools' must be a list of block ids.")
+    schema = config.get("output_schema")
+    if schema not in (None, "", {}):
+        parsed = _json_value(schema)
+        if not isinstance(parsed, dict):
+            problems.append(f"{where}: the output schema must be a JSON object.")
+        else:
+            from jsonschema import Draft202012Validator
+            from jsonschema.exceptions import SchemaError
+
+            try:
+                Draft202012Validator.check_schema(parsed)
+            except SchemaError as e:
+                problems.append(f"{where}: the output schema is not a valid JSON Schema: {e.message}")
+    for name, (_, lo, hi) in LIMITS.items():
+        _check_number(problems, f"{where}: {name}", config.get(name), lo, hi)
+    _check_number(problems, f"{where}: max_total_tokens", config.get("max_total_tokens"), 1, 10**9)
+    _check_number(problems, f"{where}: temperature", config.get("temperature"), *TEMPERATURE_RANGE, integer=False)
+    return problems
+
+
+def _refs(config: Any) -> set[str]:
+    """Block ids a config's {{ }} expressions read from (resume links aside)."""
+    found = set()
+    for text in _strings(config or {}):
+        for m in PLACEHOLDER.finditer(text):
+            head = m.group(1).strip().split(".")[0]
+            if head and head != RESUME_NAMESPACE:
+                found.add(head)
+    return found
+
+
+def tool_wiring_problems(block_defs: dict) -> list[str]:
+    """Blocks in an agent's tools aren't DAG nodes: no edges, exactly one
+    agent, a complete tool definition, and every block their config
+    references must be upstream of the agent (they resolve when it runs)."""
+    problems: list[str] = []
+    definition = {"blocks": block_defs}
+    owners = agent_tools.tool_owners(definition)
+    in_edges = {t for b in block_defs.values() if isinstance(b, dict) for t in edge_targets(b)}
+    in_deps = {
+        d for b in block_defs.values() if isinstance(b, dict) and isinstance(b.get("depends_on"), list)
+        for d in b["depends_on"]
+    }
+
+    for tool_id, agents in sorted(owners.items()):
+        first = agents[0]
+        tool = block_defs.get(tool_id)
+        if not isinstance(tool, dict):
+            problems.append(f"Agent '{first}' lists tool '{tool_id}', which doesn't exist.")
+            continue
+        tool_type = tool.get("type")
+        if tool_type == agent_tools.AGENT_TYPE:
+            problems.append(f"Agent '{first}': '{tool_id}' is an agent, and agents can't use agents as tools.")
+            continue
+        try:
+            usable = getattr(get_block_class(tool_type), "usable_as_tool", False)
+        except KeyError:
+            usable = False
+        if not usable:
+            problems.append(
+                f"Agent '{first}': '{tool_id}' is a {tool_type} block; only HTTP Request blocks can be tools."
+            )
+            continue
+        if len(set(agents)) > 1:
+            problems.append(
+                f"Tool '{tool_id}' is connected to more than one agent ({', '.join(sorted(set(agents)))})."
+            )
+        elif len(agents) > 1:
+            problems.append(f"Agent '{first}' lists tool '{tool_id}' more than once.")
+        if tool.get("depends_on") or tool.get("next"):
+            problems.append(
+                f"Tool '{tool_id}' can't have other connections: a tool runs only when its agent calls it."
+            )
+        if tool_id in in_edges or tool_id in in_deps:
+            problems.append(f"Tool '{tool_id}' can't be connected into the workflow: only its agent uses it.")
+        problems.extend(agent_tools.definition_problems(tool_id, config_of(tool)))
+
+        upstream = ancestors(definition, first)
+        for ref in sorted(_refs(config_of(tool))):
+            if ref == tool_id or ref not in block_defs:
+                continue
+            if ref not in upstream:
+                problems.append(
+                    f"Tool '{tool_id}' uses '{ref}', which isn't upstream of its agent '{first}'. "
+                    f"Connect '{ref}' before '{first}'."
+                )
+
+    for agent_id, b in block_defs.items():
+        if not isinstance(b, dict) or b.get("type") != agent_tools.AGENT_TYPE:
+            continue
+        names: dict[str, set[str]] = {}
+        for tool_id in agent_tools.agent_tool_ids(b):
+            tool = block_defs.get(tool_id)
+            if isinstance(tool, dict):
+                name = str(config_of(tool).get("tool_name") or "").strip()
+                if name:
+                    names.setdefault(name, set()).add(tool_id)
+        for name, ids in sorted(names.items()):
+            if len(ids) > 1:
+                problems.append(
+                    f"Agent '{agent_id}': tool name '{name}' is used by {', '.join(sorted(ids))}. "
+                    f"Tool names must be unique."
+                )
+    return problems
+
+
+def definition_warnings(definition: Any) -> list[str]:
+    """Things that are valid but may not do what the author expects."""
+    if not isinstance(definition, dict) or not isinstance(definition.get("blocks"), dict):
+        return []
+    block_defs = definition["blocks"]
+    warnings: list[str] = []
+    for tool_id in sorted(agent_tools.tool_block_ids(definition)):
+        tool = block_defs.get(tool_id)
+        if not isinstance(tool, dict):
+            continue
+        keys = agent_tools.unsupported_keywords(agent_tools.tool_parameters(config_of(tool)))
+        if keys:
+            warnings.append(
+                f"Tool '{tool_id}': Gemini may ignore these JSON Schema keywords in its parameters: "
+                f"{', '.join(keys)}. Arguments are still checked against the full schema."
+            )
+    for block_id, b in block_defs.items():
+        if isinstance(b, dict) and b.get("type") == agent_tools.AGENT_TYPE:
+            schema = _json_value(config_of(b).get("output_schema"))
+            keys = agent_tools.unsupported_keywords(schema) if isinstance(schema, dict) else []
+            if keys:
+                warnings.append(
+                    f"Agent '{block_id}': Gemini may ignore these JSON Schema keywords in the output schema: "
+                    f"{', '.join(keys)}. The final answer is still checked against the full schema."
+                )
+    return warnings
+
+
 def ancestors(definition: dict, block_id: str) -> set[str]:
     """Every block upstream of block_id, following depends_on."""
     block_defs = definition.get("blocks", {})
+
+    def deps(bid) -> list:
+        b = block_defs.get(bid)
+        d = b.get("depends_on", []) if isinstance(b, dict) else []
+        return [x for x in d if isinstance(x, str)] if isinstance(d, list) else []
+
     found: set[str] = set()
-    stack = list(block_defs.get(block_id, {}).get("depends_on", []))
+    stack = deps(block_id)
     while stack:
         a = stack.pop()
         if a in found or a not in block_defs:
             continue
         found.add(a)
-        stack.extend(block_defs[a].get("depends_on", []))
+        stack.extend(deps(a))
     return found
 
 

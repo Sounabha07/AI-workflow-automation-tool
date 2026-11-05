@@ -27,6 +27,7 @@ CREDENTIAL_TYPES: dict[str, dict[str, Any]] = {
         "fields": [{"name": "api_key", "label": "API key"}],
     }
     for p in PROVIDERS.values()
+    if p.credential_type
 }
 
 

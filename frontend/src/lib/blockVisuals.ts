@@ -1,4 +1,4 @@
-import { Clock, FormInput, Globe, Hourglass, Play, Sparkles, Split, Webhook, type LucideIcon } from "lucide-react";
+import { Bot, Clock, FormInput, Globe, Hourglass, Play, Sparkles, Split, Webhook, type LucideIcon } from "lucide-react";
 
 export interface BlockVisual {
   label: string;
@@ -17,6 +17,7 @@ export const BLOCK_VISUALS: Record<string, BlockVisual> = {
   input_block: { label: "Input", icon: FormInput, color: "data" },
   http_request: { label: "HTTP", icon: Globe, color: "action" },
   llm: { label: "LLM", icon: Sparkles, color: "llm" },
+  agent: { label: "Agent", icon: Bot, color: "llm" },
 };
 
 export function blockVisual(type: string): BlockVisual {
@@ -26,10 +27,10 @@ export function blockVisual(type: string): BlockVisual {
 }
 
 /** Category order for the block picker (B2). */
-export const CATEGORY_ORDER = ["Triggers", "Flow", "Data", "Actions", "llm", "Communication"] as const;
+export const CATEGORY_ORDER = ["Triggers", "Flow", "Data", "Actions", "llm", "ai", "Communication"] as const;
 
 /** Display name when a category id isn't already one. */
-export const CATEGORY_LABEL: Record<string, string> = { llm: "LLMs" };
+export const CATEGORY_LABEL: Record<string, string> = { llm: "LLMs", ai: "AI" };
 
 export const CATEGORY_COLOR: Record<string, string> = {
   Triggers: "trigger",
@@ -37,6 +38,7 @@ export const CATEGORY_COLOR: Record<string, string> = {
   Data: "data",
   Actions: "action",
   llm: "llm",
+  ai: "llm",
   Communication: "ink-3",
 };
 

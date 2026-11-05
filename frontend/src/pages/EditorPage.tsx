@@ -47,6 +47,7 @@ function EditorPageInner() {
   const resetBlockStates = useEditorStore((s) => s.resetBlockStates);
   const setBlockState = useEditorStore((s) => s.setBlockState);
   const applyBlockStatusEvent = useEditorStore((s) => s.applyBlockStatusEvent);
+  const applyAgentStepEvent = useEditorStore((s) => s.applyAgentStepEvent);
   const applyRunStatusEvent = useEditorStore((s) => s.applyRunStatusEvent);
   const setOpenBlockId = useEditorStore((s) => s.setOpenBlockId);
   const clearDirty = useEditorStore((s) => s.clearDirty);
@@ -138,6 +139,10 @@ function EditorPageInner() {
 
   const onRunEvent = useCallback(
     (event: RunEvent) => {
+      if (event.type === "agent.step") {
+        applyAgentStepEvent(event);
+        return;
+      }
       if (event.type === "block_status") {
         applyBlockStatusEvent(event);
         // A tested wait block parks rather than finishing; the test itself is done.
@@ -167,7 +172,7 @@ function EditorPageInner() {
         }
       }
     },
-    [applyBlockStatusEvent, applyRunStatusEvent, setBlockState, queryClient, id, runId]
+    [applyBlockStatusEvent, applyRunStatusEvent, applyAgentStepEvent, setBlockState, queryClient, id, runId]
   );
 
   useRunEvents(activeRunId, onRunEvent);
@@ -202,11 +207,12 @@ function EditorPageInner() {
 
   const saveMutation = useMutation({
     mutationFn: (definition: WorkflowDefinition) => updatePipeline(pipelineId!, { definition }),
-    onSuccess: () => {
+    onSuccess: (saved) => {
       clearDirty();
       queryClient.invalidateQueries({ queryKey: ["pipelines"] });
       queryClient.invalidateQueries({ queryKey: ["pipeline", pipelineId] });
-      toast.success("Saved");
+      if (saved?.warnings?.length) toast.warning("Saved, with warnings", { description: saved.warnings.join("\n") });
+      else toast.success("Saved");
     },
     onError: (err) => reportSaveError(err),
   });

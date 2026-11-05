@@ -214,6 +214,65 @@ HTTP_BLOCK_SCHEMA = {
             "type": "boolean",
             "default": False,
         },
+
+        # ── Tool definition ─────────────────────────────────────────── #
+        # Used only when this block is connected to an agent's Tools port
+        # (app/agent/). Fields with "section": "tool" are rendered by the
+        # editor's tool panel, not with the generic parameters.
+        {
+            "name": "tool_name",
+            "label": "Tool name",
+            "type": "string",
+            "section": "tool",
+            "placeholder": "get_weather",
+            "description": "Letters, digits and underscores, starting with a letter or _. Max 64.",
+        },
+        {
+            "name": "tool_description",
+            "label": "Tool description",
+            "type": "text",
+            "section": "tool",
+            "placeholder": "Looks up the current weather for a city. Use it when the user asks about weather.",
+            "description": "Tells the model when and how to use this tool. At least 20 characters.",
+        },
+        {
+            "name": "tool_parameters",
+            "label": "Parameters (JSON Schema)",
+            "type": "json",
+            "section": "tool",
+            "default": {"type": "object", "properties": {}},
+            "description": "What the model passes. GET/DELETE/HEAD send them as query params, "
+                           "POST/PUT/PATCH as the JSON body; {name} in the URL is a path param.",
+        },
+        {
+            "name": "tool_static_fields",
+            "label": "Static fields",
+            "type": "json",
+            "section": "tool",
+            "default": {},
+            "description": "Always sent, and they win over the model's values.",
+        },
+        {
+            "name": "tool_side_effects",
+            "label": "Side effects",
+            "type": "options",
+            "section": "tool",
+            "default": "auto",
+            "options": [
+                {"label": "Auto (GET and HEAD are safe)", "value": "auto"},
+                {"label": "Yes: never repeat automatically", "value": "true"},
+                {"label": "No: safe to repeat", "value": "false"},
+            ],
+        },
+        {
+            "name": "output_mapping",
+            "label": "Output mapping",
+            "type": "key_value_list",
+            "section": "tool",
+            "default": [],
+            "description": "Optional. Name -> dotted path into the response body (items.0.id). "
+                           "When set, the model sees only these fields.",
+        },
     ],
 }
 
@@ -224,6 +283,11 @@ HTTP_BLOCK_SCHEMA = {
 
 # Response body kept in error messages; longer bodies are cut with a marker.
 MAX_ERROR_BODY_CHARS = 2000
+
+
+def _pairs(value: Any) -> list[dict]:
+    """A key_value_list field's entries; anything that isn't one is skipped."""
+    return [p for p in value if isinstance(p, dict)] if isinstance(value, list) else []
 
 
 @register_block("http_request")
@@ -243,6 +307,7 @@ class HttpRequestBlock(BaseBlock):
     """
 
     schema = HTTP_BLOCK_SCHEMA
+    usable_as_tool = True
 
     # Retry budget: HTTP errors are often transient
     max_retries: int = 3
@@ -256,18 +321,32 @@ class HttpRequestBlock(BaseBlock):
         credentials: dict[str, Any] | None = None
     ) -> dict[str, Any]:
 
-        method  = config.get("method", "GET").upper()
-        url     = config.get("url", "").strip()
-        timeout = int(config.get("timeout_seconds", 30))
+        method  = str(config.get("method") or "GET").upper()
+        url     = str(config.get("url") or "").strip()
+        try:
+            timeout = float(config.get("timeout_seconds") or 30)
+        except (TypeError, ValueError):
+            raise FatalError(
+                f"HTTP Request block: 'timeout_seconds' must be a number, got {config.get('timeout_seconds')!r}."
+            ) from None
+        if timeout <= 0:
+            raise FatalError("HTTP Request block: 'timeout_seconds' must be more than 0.")
 
         if not url:
             raise FatalError("HTTP Request block: 'url' is required but was empty.")
+
+        # A value put into the URL by an expression may hold spaces or
+        # non-ASCII text, which urllib refuses. Percent-encode those, leaving
+        # reserved characters and existing %XX escapes as they are.
+        url = urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=%~")
+        if urllib.parse.urlsplit(url).scheme.lower() not in ("http", "https"):
+            raise FatalError(f"HTTP Request block: the URL must start with http:// or https://, got {url[:100]!r}.")
 
         # ── Build headers dict ──────────────────────────────────────── #
         headers: dict[str, str] = {}
 
         if config.get("send_headers"):
-            for pair in config.get("headers", []):
+            for pair in _pairs(config.get("headers")):
                 k = str(pair.get("key", "")).strip()
                 v = str(pair.get("value", "")).strip()
                 if k:
@@ -303,7 +382,7 @@ class HttpRequestBlock(BaseBlock):
         # ── Build query string ──────────────────────────────────────── #
         query_params: dict[str, str] = {}
         if config.get("send_query_params"):
-            for pair in config.get("query_params", []):
+            for pair in _pairs(config.get("query_params")):
                 k = str(pair.get("key", "")).strip()
                 v = str(pair.get("value", "")).strip()
                 if k:
@@ -337,7 +416,7 @@ class HttpRequestBlock(BaseBlock):
             elif content_type == "form":
                 form_pairs = {
                     str(p.get("key", "")): str(p.get("value", ""))
-                    for p in config.get("body_form", [])
+                    for p in _pairs(config.get("body_form"))
                     if p.get("key")
                 }
                 body_bytes = urllib.parse.urlencode(form_pairs).encode("utf-8")
@@ -382,15 +461,22 @@ class HttpRequestBlock(BaseBlock):
                 f"HTTP Request block: network error — {e.reason}"
             )
 
-        # ── Parse response body ─────────────────────────────────────── #
-        content_type_resp = resp_hdrs.get(
-            "Content-Type", resp_hdrs.get("content-type", "")
-        )
+        except (TimeoutError, OSError) as e:
+            # A read timeout after connecting surfaces as TimeoutError, not URLError.
+            raise RetryableError(
+                f"HTTP Request block: network error — {type(e).__name__}: {e or 'timed out'}"
+            )
 
-        if "application/json" in content_type_resp:
+        # ── Parse response body ─────────────────────────────────────── #
+        content_type_resp = next(
+            (str(v) for k, v in resp_hdrs.items() if k.lower() == "content-type"), ""
+        ).lower()
+
+        # application/json, and the +json types (problem+json, vnd.api+json).
+        if "application/json" in content_type_resp or "+json" in content_type_resp:
             try:
                 data = json.loads(raw_body.decode("utf-8"))
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 data = raw_body.decode("utf-8", errors="replace")
         else:
             data = raw_body.decode("utf-8", errors="replace")
@@ -410,14 +496,17 @@ class HttpRequestBlock(BaseBlock):
 
         if status == 429:
             raise RetryableError(
-                f"HTTP Request block: rate limited (429). Body: {body_text}"
+                f"HTTP Request block: rate limited (429). Body: {body_text}",
+                status=status, body=body_text,
             )
         if 500 <= status < 600:
             raise RetryableError(
-                f"HTTP Request block: server error ({status}). Body: {body_text}"
+                f"HTTP Request block: server error ({status}). Body: {body_text}",
+                status=status, body=body_text,
             )
         if 400 <= status < 500:
             raise FatalError(
                 f"HTTP Request block: client error ({status}). "
-                f"This won't succeed on retry. Body: {body_text}"
+                f"This won't succeed on retry. Body: {body_text}",
+                status=status, body=body_text,
             )

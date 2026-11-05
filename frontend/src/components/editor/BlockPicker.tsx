@@ -11,6 +11,7 @@ const CATEGORY_DOT_CLASS: Record<string, string> = {
   Data: "bg-data",
   Actions: "bg-action",
   llm: "bg-llm",
+  ai: "bg-llm",
   Communication: "bg-ink-3",
 };
 

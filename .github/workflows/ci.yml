@@ -68,6 +68,11 @@ jobs:
       - name: Generate a credentials encryption key
         run: echo "CREDENTIALS_ENCRYPTION_KEY=$(python -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')" >> "$GITHUB_ENV"
 
+      # The scripted LLM provider and the /_test/echo endpoints, so the
+      # smoke test exercises the agent block without calling Gemini.
+      - name: Enable test providers
+        run: echo "ENABLE_TEST_PROVIDERS=1" >> "$GITHUB_ENV"
+
       - name: Start the stack
         run: docker compose up --build -d
 

@@ -53,8 +53,17 @@ def _lookup(path: str, run_state: dict) -> Any:
     current = run_state[block_id]
     walked = block_id
     for segment in field_path:
+        # A list is indexed by position ({{ http_1.data.items.0.id }}), as the
+        # editor's expression preview does.
+        if isinstance(current, list) and segment.isdigit() and int(segment) < len(current):
+            current = current[int(segment)]
+            walked += f".{segment}"
+            continue
         if not isinstance(current, dict) or segment not in current:
-            available = sorted(current.keys()) if isinstance(current, dict) else []
+            if isinstance(current, list):
+                available = [f"0..{len(current) - 1}"] if current else ["(empty list)"]
+            else:
+                available = sorted(current.keys()) if isinstance(current, dict) else []
             raise ValueError(
                 f"Reference '{{{{ {path} }}}}' — path stopped at "
                 f"'{walked}.{segment}'. "

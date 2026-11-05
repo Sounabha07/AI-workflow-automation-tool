@@ -34,10 +34,16 @@ export function useAddBlock() {
       ? nodes.find((n) => blockVisual(n.data.blockType).isTrigger)
       : undefined;
 
+    // Don't land exactly on another block, where the new one would be hidden.
+    const position = { x: flowPos.x - 44, y: flowPos.y - 44 };
+    const occupied = (p: { x: number; y: number }) =>
+      nodes.some((n) => Math.abs(n.position.x - p.x) < 120 && Math.abs(n.position.y - p.y) < 130);
+    for (let i = 0; i < 20 && occupied(position); i++) position.y += 140;
+
     const node: FlowNode = {
       id,
       type: "block",
-      position: oldTrigger ? oldTrigger.position : { x: flowPos.x - 44, y: flowPos.y - 44 },
+      position: oldTrigger ? oldTrigger.position : position,
       data: { blockId: id, blockType: type, config, notes: "" },
     };
 

@@ -208,3 +208,31 @@ CREATE TABLE IF NOT EXISTS pipeline_wait_links (
     token           TEXT NOT NULL UNIQUE,
     UNIQUE (pipeline_id, block_id)
 );
+
+-- ============================================================
+-- Agent block checkpoints (app/agent/steps.py): one row per model turn
+-- and per tool call, each committed on its own so a retry of the agent
+-- can rebuild its transcript and never repeat a finished tool call.
+-- Model turns have tool_call_id NULL, so NULLs count as equal in the key.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS agent_steps (
+    id                  UUID PRIMARY KEY,
+    run_id              UUID NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    block_id            TEXT NOT NULL,
+    step_index          INT NOT NULL,
+    kind                TEXT NOT NULL CHECK (kind IN ('model', 'tool')),
+    tool_call_id        TEXT NULL,
+    tool_name           TEXT NULL,
+    status              TEXT NOT NULL CHECK (status IN ('started', 'completed', 'failed')),
+    side_effects        BOOLEAN NULL,
+    args                JSONB NULL,
+    result              JSONB NULL,
+    error               TEXT NULL,
+    provider_payload    JSONB NULL,
+    usage               JSONB NULL,
+    started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at         TIMESTAMPTZ NULL,
+    CONSTRAINT unique_agent_step UNIQUE NULLS NOT DISTINCT (run_id, block_id, step_index, tool_call_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_steps_run_block ON agent_steps (run_id, block_id);
