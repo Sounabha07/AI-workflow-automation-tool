@@ -170,8 +170,14 @@ async def create_run(
     if require_active and not pipeline["is_active"]:
         raise PipelineInactiveError(f"Pipeline {pipeline_id} is not active")
 
+    from app.agent.tools import tool_block_ids
+
     definition = _load_json(pipeline["definition"])
-    blocks = definition["blocks"]
+    # Blocks wired to an agent's Tools port are called by the agent, never
+    # scheduled: no block_executions row, not counted in total_blocks. They
+    # stay in pipeline_snapshot, which the agent reads them from.
+    tools = tool_block_ids(definition)
+    blocks = {bid: b for bid, b in definition["blocks"].items() if bid not in tools}
     total_blocks = len(blocks)
 
     if activate and not pipeline["is_active"]:
@@ -301,7 +307,7 @@ async def get_block_context(run_id: str, block_id: str) -> dict:
     try:
         row = await conn.fetchrow(
             """
-            SELECT be.block_type, r.pipeline_snapshot, r.input_data, r.trigger_payload
+            SELECT be.block_type, be.started_at, r.pipeline_snapshot, r.input_data, r.trigger_payload
             FROM block_executions be
             JOIN runs r ON r.id = be.run_id
             WHERE be.run_id = $1 AND be.block_id = $2
@@ -352,10 +358,28 @@ async def get_block_context(run_id: str, block_id: str) -> dict:
         finally:
             await conn.close()
 
+    input_data = trigger_payload if isinstance(trigger_payload, dict) else {}
+
+    # An agent's tools: each tool block's config, resolved against the same
+    # run_state now. Passed in input_data, never config, so tool secrets
+    # aren't stored in the agent's resolved_config.
+    if row["block_type"] == "agent":
+        tool_schema = getattr(get_block_class("http_request"), "schema", {})
+        tools = {}
+        for tool_id in raw_config.get("tools") or []:
+            tool_def = snapshot["blocks"].get(tool_id)
+            if tool_def is None:
+                raise ValueError(f"Agent '{block_id}': tool block '{tool_id}' isn't in this workflow.")
+            tools[tool_id] = resolve(
+                structure_json_fields(tool_def.get("config") or {}, tool_schema), run_state
+            )
+        # The total timeout counts from the first attempt, which set started_at.
+        input_data = {"tools": tools, "started_at": row["started_at"]}
+
     return {
         "block_type": row["block_type"],
         "config": resolved_config,
-        "input_data": trigger_payload if isinstance(trigger_payload, dict) else {},
+        "input_data": input_data,
         "credentials": credentials,
     }
 
@@ -661,6 +685,7 @@ async def handle_block_failure(
     retryable: bool,
     attempts: int,
     from_status: str | None = None,
+    detail: dict | None = None,
 ) -> bool:
     """Run-wide failure rule: any block failure, retries exhausted,
     fails the ENTIRE run, no exceptions. `retryable` is true only for an
@@ -686,6 +711,8 @@ async def handle_block_failure(
                 "attempts": attempts,
                 "retryable": retryable,
             }
+            if detail is not None:
+                error["detail"] = detail
             retry_count = max(attempts - 1, 0)
             # Only the first finish counts: a repeat must not touch the counters.
             claimed = await conn.fetchval(
@@ -694,7 +721,7 @@ async def handle_block_failure(
                 f"started_at = COALESCE(started_at, NOW()), finished_at = NOW() "
                 f"WHERE run_id = $4 AND block_id = $5 AND {_NOT_FINISHED} "
                 f"AND ($6::text IS NULL OR status::text = $6) RETURNING 1",
-                json.dumps(error),
+                json.dumps(error, default=str),
                 retryable,
                 retry_count,
                 run_id,
@@ -703,11 +730,13 @@ async def handle_block_failure(
             )
             if claimed is None:
                 return False
-            pending_events.append(_block_event(block_id, "failed", retry_count, error))
+            # Events and the run summary leave the (possibly large) detail out.
+            brief = {k: v for k, v in error.items() if k != "detail"}
+            pending_events.append(_block_event(block_id, "failed", retry_count, brief))
 
             # Fail the run before decrementing, so a failing last block can
             # never flip the run to succeeded first.
-            error_summary = {**error, "block_id": block_id}
+            error_summary = {**brief, "block_id": block_id}
             pipeline_id = await conn.fetchval(
                 "UPDATE runs SET status = 'failed', error_summary = $1, finished_at = NOW() "
                 "WHERE id = $2 AND status != 'failed' RETURNING pipeline_id",

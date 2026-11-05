@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from db import get_connection
 from engine.triggers import list_triggers, list_wait_links, set_pipeline_active, sync_triggers
 from app.errors import NotFoundError
-from app.validation import ensure_valid
+from app.validation import definition_warnings, ensure_valid
 from app.api.models import (
     CreatePipelineRequest,
     UpdatePipelineRequest,
@@ -58,10 +58,12 @@ def _parse_jsonb(v) -> dict:
 async def _pipeline_response(conn, row) -> PipelineResponse:
     row = dict(row)
     triggers = (await list_triggers(conn, [row["id"]])).get(str(row["id"]), [])
+    definition = _parse_jsonb(row["definition"])
     return PipelineResponse(
         id=row["id"],
         name=row["name"],
-        definition=_parse_jsonb(row["definition"]),
+        definition=definition,
+        warnings=definition_warnings(definition),
         is_active=row["is_active"],
         is_template=row["is_template"],
         created_at=row["created_at"],

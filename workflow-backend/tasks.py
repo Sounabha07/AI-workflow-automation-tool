@@ -82,7 +82,7 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
         ))
     except RetryableError as e:
         if self.request.retries >= block_cls.max_retries:
-            _save_result(engine.handle_block_failure, run_id, block_id, str(e), True, attempts)
+            _save_result(engine.handle_block_failure, run_id, block_id, str(e), True, attempts, None, e.detail)
             return
         delay = compute_backoff_seconds(
             attempt=self.request.retries,
@@ -94,7 +94,7 @@ def execute_block_task(self, run_id: str, block_id: str) -> None:
         asyncio.run(engine.record_retry(run_id, block_id, self.request.retries + 1))
         raise self.retry(exc=e, countdown=delay, max_retries=block_cls.max_retries)
     except FatalError as e:
-        _save_result(engine.handle_block_failure, run_id, block_id, str(e), False, attempts)
+        _save_result(engine.handle_block_failure, run_id, block_id, str(e), False, attempts, None, e.detail)
         return
     except Exception as e:
         # Logged without the config, which may hold sensitive values.

@@ -8,6 +8,7 @@ from blocks import TRIGGER_TYPES
 from db import get_connection
 from engine.resolver import resume_url
 from app.errors import NotFoundError
+from app.agent.tools import agent_tool_ids, tool_block_ids
 from app.validation import ancestors, ensure_valid
 from app.api.routes_pipelines import fetch_latest_outputs
 from app.api.models import (
@@ -98,8 +99,14 @@ async def test_step(body: TestStepRequest) -> TestStepResponse:
                 f"Block '{body.block_id}' not found in pipeline definition"
             )
 
-        # 4. Get block_def
+        # 4. Get block_def. A tool runs only inside its agent; POST /tools/test
+        # calls one on its own.
         block_def = definition["blocks"][body.block_id]
+        if body.block_id in tool_block_ids(definition):
+            raise ValueError(
+                f"'{body.block_id}' is an agent's tool. Use Test tool to call it on its own, "
+                f"or test the agent."
+            )
 
         # 5. Seed upstream outputs: each ancestor's latest succeeded output
         upstream = ancestors(definition, body.block_id)
@@ -114,14 +121,19 @@ async def test_step(body: TestStepRequest) -> TestStepResponse:
                 if definition["blocks"][bid].get("type") in TRIGGER_TYPES:
                     seed_outputs[bid] = body.trigger_payload
 
-        # 6. Build minimal snapshot
+        # 6. Build minimal snapshot. An agent's tool blocks come along: the
+        # agent reads them from the snapshot, and they get no rows of their own.
         minimal_snapshot = {
             "blocks": {
                 body.block_id: {
                     **block_def,
                     "depends_on": [],
                     "next": []
-                }
+                },
+                **{
+                    t: definition["blocks"][t]
+                    for t in agent_tool_ids(block_def) if t in definition["blocks"]
+                },
             }
         }
 
